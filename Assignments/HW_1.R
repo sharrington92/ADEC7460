@@ -53,7 +53,7 @@
   {
     train <- data %>% 
       filter(year(period) < 2022)# %>% 
-      filter(year(period) >= 2018)
+      # filter(year(period) >= 2018)
     
     test <- data %>% 
       filter(year(period) == 2022)
@@ -68,7 +68,7 @@
       eia_list <- gc.url %>% 
         str_c(., "&api_key=", eia.key) %>% 
         fromJSON()
-      GET
+      
       eia_data <- eia_list$response$data
       
       gc.gen <- eia_data %>% 
@@ -79,6 +79,60 @@
         filter(year(period) < 2023) %>% 
         tsibble()
       
+    }
+    
+    # Hydroelectric Capacity
+    {
+      eia_data <- list()
+      
+      
+      for(i in 1:ceiling(82334 / 5000)){
+        
+        url.cap <- paste0(
+          "https://api.eia.gov/v2/electricity/operating-generator-capacity/data/?",
+          "frequency=monthly&data[0]=nameplate-capacity-mw&",
+          "data[1]=net-summer-capacity-mw&data[2]=net-winter-capacity-mw&data[3]=planned-derate-summer-cap-mw&data[4]=planned-uprate-summer-cap-mw&",
+          "facets[stateid][]=ID&facets[stateid][]=OR&facets[stateid][]=WA&",
+          "facets[energy_source_code][]=WAT&",
+          "facets[energy_source_code][]=WAT&facets[sector][]=electric-utility&facets[sector][]=industrial-chp&",
+          "start=2010-01&end=2022-12&",
+          "sort[0][column]=period&",
+          "sort[0][direction]=desc&",
+          "offset=", (i - 1)*5000,
+          "&length=5000"
+        )
+        
+        
+        eia_list <- url.cap %>% 
+          str_c(., "&api_key=", eia.key) %>%
+          fromJSON()
+        
+        eia_data[[i]] <- eia_list$response$data
+        
+      }
+      
+      hydro.cap <- eia_data %>% 
+        do.call(bind_rows, .) %>% 
+        as_tibble() %>% 
+        mutate(
+          period = ym(period) %>% yearmonth(.)
+        ) %>% 
+        filter(year(period) < 2023) %>% 
+        group_by(period) %>% 
+        summarize(across(
+          c(
+            `nameplate-capacity-mw`, `net-summer-capacity-mw`, `net-winter-capacity-mw`, 
+            `planned-derate-summer-cap-mw`, `planned-uprate-summer-cap-mw`
+          ),
+          sum
+        ))
+        tsibble()
+      
+        
+        hydro.cap %>% 
+          filter(plantName == "Wanapum" & generatorid == "1A") %>% 
+          distinct() %>% 
+          View()
     }
   }
 }
