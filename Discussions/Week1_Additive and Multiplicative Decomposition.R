@@ -45,18 +45,6 @@
 
 # STL Decomposition
 {
-  # Additive Decomposition
-  {
-    data %>% 
-      model(
-        classical_decomposition(residential.total, type = "additive")
-      ) %>% 
-      components() %>% 
-      autoplot() +
-      theme_bw()
-  }
-  
-  
   # Multiplicative Decomposition
   {
     data %>% 
