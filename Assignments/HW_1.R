@@ -124,15 +124,12 @@
             `nameplate-capacity-mw`, `net-summer-capacity-mw`, `net-winter-capacity-mw`, 
             `planned-derate-summer-cap-mw`, `planned-uprate-summer-cap-mw`
           ),
-          sum
-        ))
+          \(x){sum(x, na.rm = T)}
+        )) %>% 
         tsibble()
       
         
-        hydro.cap %>% 
-          filter(plantName == "Wanapum" & generatorid == "1A") %>% 
-          distinct() %>% 
-          View()
+
     }
   }
 }
@@ -157,6 +154,7 @@
   train %>% 
     gg_subseries(value) +
     theme_bw() +
+    geom_point() +
     ggtitle("Seasonal Plot: Northwest hydroelectric net generation") +
     ylab("billion kilowatthours")
   
@@ -179,15 +177,29 @@
     gc.gen %>% 
       filter(year(period) >= 2010) %>% 
       autoplot(generation)
+    
+    
+    hydro.cap %>% 
+      autoplot(`net-winter-capacity-mw`) +
+      theme_bw() +
+      geom_smooth(span = 1)
   }
 }
 
 # Decomposition
 {
+  # Trend captures water-year
   data %>% 
     model(
-      # STL(box_cox(value, .5) ~ trend(window = 39) + season(window = 13), robust = TRUE)
-      STL(value ~ trend(window = 73) + season(window = 13), robust = TRUE)
+      STL(value ~ trend(window = 19) + season(window = 21), robust = TRUE)
+    ) %>% 
+    components() %>% 
+    autoplot() +
+    theme_bw()
+  
+  hydro.cap %>% 
+    model(
+      STL(`net-winter-capacity-mw` ~ trend(window = 21) + season(window = 13), robust = TRUE)
     ) %>% 
     components() %>% 
     autoplot() +
