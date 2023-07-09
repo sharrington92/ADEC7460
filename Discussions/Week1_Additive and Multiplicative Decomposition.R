@@ -86,17 +86,14 @@
     geom_line(linetype = "dotted") + 
     geom_point(size = 2) +
     theme_bw() +
-    ggtitle("Difference between maximum monthly ")
+    ggtitle("Chart of Annual Max & Min")
   
   data.annual %>% 
     select(year, max, min) %>% 
-    # pivot_longer(-year, names_to = "type", values_to = "value") %>% View()
     ggplot(aes(x = year)) +
-    # geom_line(linetype = "dotted") + 
-    # geom_point(size = 2) +
     geom_ribbon(aes(
       ymin = min, ymax = max
     )) +
     theme_bw() +
-    ggtitle("Difference between maximum monthly ")
+    ggtitle("Ribbon chart of Annual Max & Min")
 }
