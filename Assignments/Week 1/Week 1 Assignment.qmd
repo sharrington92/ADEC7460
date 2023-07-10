@@ -1,0 +1,339 @@
+---
+title: "Assignment #1"
+author: "Shaun Harrington"
+format: html
+editor: visual
+editor_options: 
+  chunk_output_type: console
+---
+
+## Setup
+
+```{r}
+#| warning: false
+
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE
+)
+
+library(tidyverse)
+library(fpp3)
+
+theme_set(theme_bw())
+
+data.list <- readRDS("Data.RDS")
+
+data <- data.list[[1]]
+hydro.cap <- data.list[[2]]
+gc.gen <- data.list[[3]]
+
+```
+
+
+## Preliminary Analysis
+
+### Data Prep
+
+```{r}
+
+train <- data %>% 
+  filter(year(period) < 2022)# %>% 
+  # filter(year(period) >= 2018)
+
+test <- data %>%
+  filter(year(period) == 2022)
+
+```
+
+
+
+### Visualizations
+
+#### Time Plot
+
+```{r}
+  
+  train %>% 
+    autoplot(value) +
+    theme_bw() +
+    ggtitle("Northwest hydroelectric net generation") +
+    ylab("billion kilowatthours")
+
+```
+
+
+#### Seasonal Plot
+
+```{r}
+  
+  train %>% 
+    gg_season(value, labels = "both") +
+    theme_bw() +
+    ggtitle("Seasonal Plot: Northwest hydroelectric net generation") +
+    ylab("billion kilowatthours")
+
+```
+
+
+#### Seasonal Subseries Plot
+
+```{r} 
+  
+  train %>% 
+    gg_subseries(value) +
+    theme_bw() +
+    geom_point() +
+    ggtitle("Seasonal Plot: Northwest hydroelectric net generation") +
+    ylab("billion kilowatthours")
+
+```
+
+
+#### Lag Plot
+
+```{r}   
+#| fig.height = 6
+
+
+  train %>% 
+    gg_lag(value, geom = "point", lags = 1:12) +
+    theme_bw() +
+    ggtitle("Lag Plot: Northwest hydroelectric net generation") +
+    ylab("billion kilowatthours")
+
+```
+
+
+#### Autocorrelation
+
+```{r}   
+#| fig.height = 4
+
+
+  train %>% 
+    ACF(value) %>% 
+    autoplot() +
+    theme_bw() +
+    ggtitle("Autocorrelation Plot: Northwest hydroelectric net generation")
+
+```
+
+
+
+### Time Series Decomposition
+
+```{r}
+
+
+  # Guerrero lambda
+  lambda <- data %>% 
+    features(value, features = guerrero) %>% 
+    pull(lambda_guerrero)
+  
+  # Trend captures water-year
+  data %>% 
+    model(
+      STL(box_cox(value, lambda) ~ trend(window = 19) + season(window = 21), robust = TRUE)
+    ) %>% 
+    components() %>% 
+    autoplot() +
+    theme_bw()
+
+```
+
+
+
+## Modeling & Forecast
+
+### Estimation
+
+```{r}
+
+  fit <- train %>% 
+    model(
+      # Naive
+      "naive" = NAIVE(value),
+      # SNAIVE
+      "snaive" = SNAIVE(value ~ lag("year")),
+      # ETS Additive
+      "ets_add" = ETS(value ~ error("A") + trend("A") + season("A")),
+      # ETS Multiplicative
+      "ets_mult" = ETS(value ~ error("M") + trend("A") + season("M")),
+      # ETS Auto
+      "ets_auto" = ETS(value)
+    )
+  
+```
+
+
+#### Training Set Metrics
+
+```{r}
+
+  glance(fit)
+
+```
+
+
+#### Residuals
+
+```{r}
+
+  fit.resid <- augment(fit)
+  autoplot(fit.resid, .innov) +
+    facet_grid(.model ~ ., scales = "free") 
+
+```
+
+##### NAIVE
+
+```{r}
+
+  fit %>% 
+    select(naive) %>% 
+    gg_tsresiduals()
+
+```
+
+##### SNAIVE
+
+```{r}
+
+  fit %>% 
+    select(snaive) %>% 
+    gg_tsresiduals()
+
+```
+
+##### ETS - Additive
+
+```{r}
+
+  fit %>% 
+    select(ets_add) %>% 
+    gg_tsresiduals()
+
+```
+
+##### ETS - Multiplicative
+
+```{r}
+
+  fit %>% 
+    select(ets_mult) %>% 
+    gg_tsresiduals()
+
+```
+
+##### ETS - Auto
+
+```{r}
+
+  fit %>% 
+    select(ets_auto) %>% 
+    gg_tsresiduals()
+
+```
+
+
+### Forecast
+
+```{r}
+
+  fx <- fit %>% 
+      forecast(new_data = test)
+
+  fx %>% autoplot(
+        test,
+        level = NULL
+      ) +
+        theme_bw() +
+        ggtitle("Forecasts for Northwest Hydro Generation")
+
+```
+
+
+
+#### Test Set Metrics
+
+```{r}
+  accuracy(fx, test)
+```
+
+
+## Cross Validation
+
+### Data Preparation
+
+```{r}
+
+  # Create CV dataset
+  train.cv <- train %>% 
+    stretch_tsibble(.init = 24, .step = 12)
+  test.cv <- test %>% 
+    stretch_tsibble(.init = 6, .step = 1)
+  
+  # Number of groups
+  max(train.cv$.id)
+  
+  
+
+```
+
+
+### Estimate Models
+
+```{r}
+  # Fit models
+  fit.cv <- train.cv %>% 
+    model(
+      # Naive
+      "naive" = NAIVE(value),
+      # SNAIVE
+      "snaive" = SNAIVE(value ~ lag("year")),
+      # ETS Additive
+      "ets_add" = ETS(value ~ error("A") + trend("A") + season("A")),
+      # ETS Multiplicative
+      "ets_mult" = ETS(value ~ error("M") + trend("A") + season("M"))
+    )
+
+```
+
+#### Training Set Metrics
+
+```{r}
+
+ fit.cv %>% 
+    accuracy() %>% 
+    group_by(.model, .type) %>% 
+    summarize(
+      across(c(ME, RMSE, MAE, MPE, MAPE, MASE, RMSSE), \(x){mean(x, na.rm = T)})
+    )
+
+```
+
+### Forecast
+
+```{r}
+
+  fx.cv <- fit.cv %>% 
+    forecast(new_data = test.cv)
+
+```
+
+
+#### Test Set Metrics
+
+```{r}
+  
+  fx.cv %>% 
+    accuracy(test.cv) %>% 
+    group_by(.model, .type) %>% 
+    summarize(
+      across(c(ME, RMSE, MAE, MPE, MAPE, MASE, RMSSE), \(x){mean(x, na.rm = T)})
+    )
+
+```
+

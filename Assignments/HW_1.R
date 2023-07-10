@@ -1,4 +1,4 @@
-# Setup
+# Setup ----
 {
   library(tidyverse)
   library(fpp3)
@@ -37,7 +37,7 @@
   }
 }
 
-# Data Prep
+# Data Prep ----
 {
   # Get 5 years of data
   {
@@ -132,9 +132,17 @@
 
     }
   }
+  
+  # Save data
+  {
+    list(
+      data, hydro.cap, gc.gen
+    ) %>% 
+      saveRDS(file.path("Assignments", "Week 1", "Data.RDS"))
+  }
 }
 
-# Data Exploration
+# Data Exploration ----
 {
   # Time Plot
   train %>% 
@@ -186,7 +194,7 @@
   }
 }
 
-# Decomposition
+# Decomposition ----
 {
   # Guerrero lambda
   lambda <- data %>% 
@@ -211,7 +219,7 @@
     theme_bw()
 }
 
-# Model Estimation
+# Model Estimation ----
 {
   fit <- train %>% 
     model(
@@ -240,7 +248,7 @@
     gg_tsresiduals()
 }
 
-# Forecast
+# Forecast ----
 {
   # Predict Test data
   {
@@ -266,7 +274,7 @@
 }
 
 
-# Cross Validation
+# Cross Validation ----
 {
   # Create CV dataset
   train.cv <- train %>% 
