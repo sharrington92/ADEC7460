@@ -188,10 +188,15 @@
 
 # Decomposition
 {
+  # Guerrero lambda
+  lambda <- data %>% 
+    features(value, features = guerrero) %>% 
+    pull(lambda_guerrero)
+  
   # Trend captures water-year
   data %>% 
     model(
-      STL(value ~ trend(window = 19) + season(window = 21), robust = TRUE)
+      STL(box_cox(value, lambda) ~ trend(window = 19) + season(window = 21), robust = TRUE)
     ) %>% 
     components() %>% 
     autoplot() +
@@ -208,34 +213,100 @@
 
 # Model Estimation
 {
-  # Naive
-  {
-    train %>% 
-      model(
-        
-      )
-  }
+  fit <- train %>% 
+    model(
+      # Naive
+      "naive" = NAIVE(value),
+      # SNAIVE
+      "snaive" = SNAIVE(value ~ lag("year")),
+      # ETS Additive
+      "ets_add" = ETS(value ~ error("A") + trend("A") + season("A")),
+      # ETS Multiplicative
+      "ets_mult" = ETS(value ~ error("M") + trend("A") + season("M")),
+      # ETS Auto
+      "ets_auto" = ETS(value)
+    )
   
-  # SNAIVE
-  {
-    
-  }
+  report(fit)
   
-  # ETS
-  {
-    
-  }
+  components(fit) %>% 
+    autoplot()
+  
+  fit.resid <- augment(fit)
+  autoplot(fit.resid, .innov) +
+    facet_grid(.model ~ .)
+  
+  augment(fit$ets_add) %>% 
+    gg_tsresiduals()
 }
 
 # Forecast
 {
   # Predict Test data
   {
+    fx <- fit %>% 
+      forecast(new_data = test)
     
   }
   
   # Assess & Compare Prediction Errors
   {
+    # Plot
+    {
+      fx %>% autoplot(
+        test,
+        level = NULL
+      ) +
+        theme_bw() +
+        ggtitle("Forecasts for Northwest Hydro Generation")
+    }
     
+    accuracy(fx, test)
   }
+}
+
+
+# Cross Validation
+{
+  # Create CV dataset
+  train.cv <- train %>% 
+    stretch_tsibble(.init = 24, .step = 12)
+  test.cv <- test %>% 
+    stretch_tsibble(.init = 6, .step = 1)
+  
+  # Number of groups
+  max(train.cv$.id)
+  
+  # Fit models
+  fit.cv <- train.cv %>% 
+    model(
+      # Naive
+      "naive" = NAIVE(value),
+      # SNAIVE
+      "snaive" = SNAIVE(value ~ lag("year")),
+      # ETS Additive
+      "ets_add" = ETS(value ~ error("A") + trend("A") + season("A")),
+      # ETS Multiplicative
+      "ets_mult" = ETS(value ~ error("M") + trend("A") + season("M"))
+    )
+  
+  # Training Set Metrics
+  fit.cv %>% 
+    accuracy() %>% 
+    group_by(.model, .type) %>% 
+    summarize(
+      across(c(ME, RMSE, MAE, MPE, MAPE, MASE, RMSSE), \(x){mean(x, na.rm = T)})
+    )
+  
+  # Forecast Test Set
+  fx.cv <- fit.cv %>% 
+    forecast(new_data = test.cv)
+  
+  # Test Set Metrics
+  fx.cv %>% 
+    accuracy(test.cv) %>% 
+    group_by(.model, .type) %>% 
+    summarize(
+      across(c(ME, RMSE, MAE, MPE, MAPE, MASE, RMSSE), \(x){mean(x, na.rm = T)})
+    )
 }
