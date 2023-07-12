@@ -335,7 +335,7 @@ This period featured some interesting results which may overshadow the predictio
 
   # Create CV dataset
   train.cv <- train %>% 
-    stretch_tsibble(.init = 24, .step = 3)
+    stretch_tsibble(.init = 12, .step = 12)
   test.cv <- test %>% 
     stretch_tsibble(.init = 6, .step = 1)
   
