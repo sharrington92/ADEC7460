@@ -35,7 +35,7 @@ gc.gen <- data.list[[3]]
 
 ### Data Series
 
-The series that will be examined today is the monthly Northwest Hydroelectric Net Generation. This represents various hydroelectric dams on the Columbia and Snake Rivers in Washington, Oregon, and Idaho. This is pulled from the EIA's API with the below code. [The data was previously queried and saved locally. The following code fetches this data.]
+The series that will be examined today is the monthly Northwest Hydroelectric Net Generation. This represents various hydroelectric dams on the Columbia and Snake Rivers in Washington, Oregon, and Idaho. This is pulled from the EIA's API with the below code. \[The data was previously queried and saved locally. The following code fetches this data.\]
 
 ```{r}
 #| echo: false
@@ -79,25 +79,22 @@ data <- fn_query_eia("HVEPGEN_NW") %>%
 
 ```
 
-
 ## Preliminary Analysis
 
-The training dataset is defined as the years 2018 through 2021. The test dataset is the year 2022. 
+The training dataset is defined as the years 2018 through 2021. The test dataset is the year 2022.
 
 ### Data Prep
 
 ```{r}
 
 train <- data %>% 
-  filter(year(period) < 2022) #%>% 
-  # filter(year(period) >= 2018)
+  filter(year(period) < 2022) %>% 
+  filter(year(period) >= 2018)
 
 test <- data %>%
   filter(year(period) == 2022)
 
 ```
-
-
 
 ### Visualizations
 
@@ -115,7 +112,6 @@ Hydroelectric generation is subject to two major forces: river flows and unit ma
 
 ```
 
-
 #### Seasonal Plot
 
 ```{r}
@@ -128,10 +124,9 @@ Hydroelectric generation is subject to two major forces: river flows and unit ma
 
 ```
 
-
 #### Seasonal Subseries Plot
 
-```{r} 
+```{r}
   
   train %>% 
     gg_subseries(value) +
@@ -145,10 +140,9 @@ Hydroelectric generation is subject to two major forces: river flows and unit ma
 
 ```
 
-
 #### Lag Plot
 
-```{r}   
+```{r}
 #| fig.height = 6
 
 
@@ -160,10 +154,9 @@ Hydroelectric generation is subject to two major forces: river flows and unit ma
 
 ```
 
-
 #### Autocorrelation
 
-```{r}   
+```{r}
 #| fig.height = 4
 
   train %>% 
@@ -174,30 +167,35 @@ Hydroelectric generation is subject to two major forces: river flows and unit ma
 
 ```
 
-
-
 ### Time Series Decomposition
 
 ```{r}
 
 
   # Guerrero lambda
-  lambda <- data %>% 
+  lambda <- train %>% 
     features(value, features = guerrero) %>% 
     pull(lambda_guerrero)
+  lambda = 0
   
   # Trend captures water-year
-  data %>% 
+  train %>% 
     model(
       STL(box_cox(value, lambda) ~ trend(window = 33) + season(window = 21), robust = TRUE)
     ) %>% 
     components() %>% 
     autoplot() +
     theme_bw()
+  
+  train %>% 
+    model(
+      STL(value ~ trend(window = 33) + season(window = 21), robust = TRUE)
+    ) %>% 
+    components() %>% 
+    autoplot() +
+    theme_bw()
 
 ```
-
-
 
 ## Modeling & Forecast
 
@@ -207,20 +205,16 @@ Hydroelectric generation is subject to two major forces: river flows and unit ma
 
   fit <- train %>% 
     model(
-      # Naive
       "naive" = NAIVE(value),
-      # SNAIVE
       "snaive" = SNAIVE(value ~ lag("year")),
-      # ETS Additive
+      "trend" = RW(value ~ drift()),
       "ets_add" = ETS(value ~ error("A") + trend("A") + season("A")),
-      # ETS Multiplicative
       "ets_mult" = ETS(value ~ error("M") + trend("A") + season("M")),
-      # ETS Auto
-      "ets_auto" = ETS(value)
+      "ets_add_bc" = ETS(box_cox(value, lambda) ~ error("A") + trend("A") + season("A")),
+      "ets_mult_bc" = ETS(box_cox(value, lambda) ~ error("M") + trend("A") + season("M")),
     )
   
 ```
-
 
 #### Training Set Metrics
 
@@ -229,7 +223,6 @@ Hydroelectric generation is subject to two major forces: river flows and unit ma
   glance(fit)
 
 ```
-
 
 #### Residuals
 
@@ -297,7 +290,6 @@ The seasonal naive model again shows significant autocorrelation, though at lag 
 
 ```
 
-
 ### Forecast
 
 ```{r}
@@ -306,7 +298,7 @@ The seasonal naive model again shows significant autocorrelation, though at lag 
       forecast(new_data = test)
 
   fx %>% autoplot(
-        test,
+        data %>% filter(year(period) >= 2020),
         level = NULL
       ) +
         theme_bw() +
@@ -314,18 +306,15 @@ The seasonal naive model again shows significant autocorrelation, though at lag 
 
 ```
 
-
-
 #### Test Set Metrics
 
-The Multiplicative ETS model scores best on the test set prediction with RMSE, MAE, and MAPE all minimized. However, surprisingly, the seasonal naive model did not score all that much worse, with a MAPE 1.3% higher and lower than all others. 
+The Multiplicative ETS model scores best on the test set prediction with RMSE, MAE, and MAPE all minimized. However, surprisingly, the seasonal naive model did not score all that much worse, with a MAPE 1.3% higher and lower than all others.
 
 ```{r}
   accuracy(fx, test)
 ```
 
-
-This period featured some interesting results which may overshadow the prediction metrics on a single year. 2018 was a high water year, while 2019 through 2021 were below average water years, and 2022 was an above average water year. Training on just the training dataset, this will indicate a declining trend, which exists solely from this exogenous factor. The season naive model produced a poor forecast, but because 2022 happened to peaked and trough the same months as 2021, it was not too bad on the metrics, but purely coincidental. A more thorough approach to evaluating these forecasts would be to use time series cross validation to determine which model produces the best forecast on average.  
+This period featured some interesting results which may overshadow the prediction metrics on a single year. 2018 was a high water year, while 2019 through 2021 were below average water years, and 2022 was an above average water year. Training on just the training dataset, this will indicate a declining trend, which exists solely from this exogenous factor. The season naive model produced a poor forecast, but because 2022 happened to peaked and trough the same months as 2021, it was not too bad on the metrics, but purely coincidental. A more thorough approach to evaluating these forecasts would be to use time series cross validation to determine which model produces the best forecast on average.
 
 ## Cross Validation
 
@@ -334,10 +323,11 @@ This period featured some interesting results which may overshadow the predictio
 ```{r}
 
   # Create CV dataset
-  train.cv <- train %>% 
-    stretch_tsibble(.init = 12, .step = 12)
+  train.cv <- data %>% 
+    filter(year(period) < 2022) %>% 
+    stretch_tsibble(.init = 36, .step = 6)
   test.cv <- test %>% 
-    stretch_tsibble(.init = 6, .step = 1)
+    stretch_tsibble(.init = 1, .step = 1)
   
   # Number of groups
   max(train.cv$.id)
@@ -346,21 +336,19 @@ This period featured some interesting results which may overshadow the predictio
 
 ```
 
-
 ### Estimate Models
 
 ```{r}
   # Fit models
   fit.cv <- train.cv %>% 
     model(
-      # Naive
       "naive" = NAIVE(value),
-      # SNAIVE
       "snaive" = SNAIVE(value ~ lag("year")),
-      # ETS Additive
+      "trend" = RW(value ~ drift()),
       "ets_add" = ETS(value ~ error("A") + trend("A") + season("A")),
-      # ETS Multiplicative
-      "ets_mult" = ETS(value ~ error("M") + trend("A") + season("M"))
+      "ets_mult" = ETS(value ~ error("M") + trend("A") + season("M")),
+      "ets_add_bc" = ETS(box_cox(value, lambda) ~ error("A") + trend("A") + season("A")),
+      "ets_mult_bc" = ETS(box_cox(value, lambda) ~ error("M") + trend("A") + season("M")),
     )
 
 ```
@@ -383,14 +371,15 @@ This period featured some interesting results which may overshadow the predictio
 ```{r}
 
   fx.cv <- fit.cv %>% 
-    forecast(new_data = test.cv)
+    forecast(new_data = test.cv) 
 
 ```
-
 
 #### Test Set Metrics
 
 ```{r}
+
+  
   
   fx.cv %>% 
     accuracy(test.cv) %>% 
@@ -398,6 +387,25 @@ This period featured some interesting results which may overshadow the predictio
     summarize(
       across(c(ME, RMSE, MAE, MPE, MAPE, MASE, RMSSE), \(x){mean(x, na.rm = T)})
     )
+
+```
+
+```{r}
+
+  fx.cv |>
+    accuracy(test.cv, by = c("h", ".model")) |>
+    ggplot(aes(x = h, y = RMSE)) +
+    geom_point()
+
+  cv.results <- fx.cv %>% 
+    accuracy(test.cv, by = c(".id", "period", ".model")) 
+
+  cv.results %>% 
+    ggplot(aes(x = period, y = RMSE, color = .model)) +
+    facet_grid(. ~ .model) +
+    # geom_boxplot(color = "black") +
+    geom_point(aes(group = interaction(.model, .id))) +
+    geom_smooth(method = "lm")
 
 ```
 
