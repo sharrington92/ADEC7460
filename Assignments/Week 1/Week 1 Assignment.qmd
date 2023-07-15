@@ -1,7 +1,7 @@
 ---
 title: "Assignment #1"
 author: "Shaun Harrington"
-format: html
+format: pdf
 editor: visual
 editor_options: 
   chunk_output_type: console
@@ -15,7 +15,8 @@ editor_options:
 knitr::opts_chunk$set(
 	echo = TRUE,
 	message = FALSE,
-	warning = FALSE
+	warning = FALSE,
+	fig.width = 8
 )
 
 library(tidyverse)
@@ -27,86 +28,51 @@ theme_set(theme_bw())
 if(basename(getwd()) != "Week 1") setwd(file.path(getwd(), "Assignments", "Week 1"))
 
 
-data <- fredr("IPB51000N") %>% 
-  mutate(date = yearmonth(date)) %>% 
-  tsibble(index = date, key = series_id)
-
-# data.list <- readRDS("Data.RDS")
-# 
-# data <- data.list[[1]]
-# hydro.cap <- data.list[[2]]
-# gc.gen <- data.list[[3]]
 
 ```
 
 ### Data Series
 
-The series that will be examined today is the monthly Northwest Hydroelectric Net Generation. This represents various hydroelectric dams on the Columbia and Snake Rivers in Washington, Oregon, and Idaho. This is pulled from the EIA's API with the below code. \[The data was previously queried and saved locally. The following code fetches this data.\]
+The series that will be examined today is the non-seasonally-adjusted Industrial Production Consumer Goods Index. This data comes from the Federal Reserve of St. Louis. 
 
 ```{r}
-#| echo: false
-#| eval: false
 
-fn_query_eia <- function(
-    the_series_id, the_source = "steo", the_frequency = "monthly", 
-    the_offset = 0, the_length = 5000, the_eia_key = eia.key){
-    
-    the_url = "https://api.eia.gov/v2/"
-    
-    # Query must be no more than 5,000
-    if(the_length > 5000) break
-    
-    get_call <- paste0(the_url, the_source, "/data/?", paste(
-      paste0("frequency=", the_frequency), 
-      "data[0]=value", 
-      paste0("facets[seriesId][]=", the_series_id), 
-      "sort[0][column]=period", 
-      "sort[0][direction]=desc", 
-      paste0("offset=", the_offset), 
-      paste0("length=", the_length),
-      sep = "&"
-    ))
-    
-    eia_list <- fromJSON(str_c(get_call, "&api_key=", the_eia_key))
-    
-    eia_data <- eia_list$response$data
-    
-    eia_data %>% 
-      as_tibble() %>% 
-      return()
-  }
-
-data <- fn_query_eia("HVEPGEN_NW") %>% 
-      mutate(
-        period = ym(period) %>% yearmonth(.)
-      ) %>% 
-      filter(year(period) < 2023) %>% 
-      tsibble()
+data <- fredr("IPB51000N") %>% 
+  mutate(
+    covid.start = factor(ifelse(date == ymd("2020-03-01"), 1, 0)),
+    covid.year = factor(ifelse(year(date) == 2020 & date >= ymd("2020-03-01"), 1, 0)),
+    date = yearmonth(date)
+  ) %>% 
+  tsibble(index = date, key = series_id)
 
 ```
 
+
 ## Preliminary Analysis
 
-The training dataset is defined as the years 2018 through 2021. The test dataset is the year 2022.
+The test dataset are the 12 most recent observations while the training set are the 48 most recent prior to that. 
 
 ### Data Prep
 
 ```{r}
 
-train <- data %>% 
-  filter(year(date) < 2022) %>% 
-  filter(year(date) >= 2018)
 
 test <- data %>%
-  filter(year(date) == 2022)
+  slice_max(n = 12, order_by = date) %>%
+  arrange(series_id, date)
+
+train <- data %>% 
+  filter(date <= min(test$date)) %>%
+  slice_max(n = 48, order_by = row_number()) %>%
+  arrange(series_id, date)
 
 ```
 
 ### Visualizations
 
-Hydroelectric generation is subject to two major forces: river flows and unit maintenance. Upgrades/repairs to turbines can take up to 5 years and would remove that unit entirely from being able to generate any electricity. This would only affect generation when constraints are binding. River flows typically peak in May through July, most dams run at capacity during this period and must spill the water they're unable to use.
-
 #### Time Plot
+
+Industrial Production was severely impacted by the COVID-19 pandemic. 
 
 ```{r}
   
@@ -116,14 +82,17 @@ Hydroelectric generation is subject to two major forces: river flows and unit ma
     ggtitle("Industrial Production, Consumer Goods") +
     ylab("Index, 2017=100")
 
+
 ```
 
 #### Seasonal Plot
 
+COVID-19 caused the seasonality to differ in 2020, though it appears mostly typical once again in 2021.
+
 ```{r}
   
   train %>% 
-    gg_season(value, labels = "both") +
+    gg_season(value, labels = "both", linewidth = .75) +
     theme_bw() +
     ggtitle("Seasonal Plot: Industrial Production, Consumer Goods") +
     ylab("Index, 2017=100")
@@ -133,15 +102,21 @@ Hydroelectric generation is subject to two major forces: river flows and unit ma
 #### Seasonal Subseries Plot
 
 ```{r}
+#| fig-width: 8
+#| fig-height: 6
   
   train %>% 
     gg_subseries(value) +
     theme_bw() +
-    geom_point() +
+    geom_point(
+      aes(color = covid.year),
+      size = 3
+    ) +
     ggtitle("Seasonal Subseries Plot: Industrial Production, Consumer Goods") +
     ylab("Index, 2017=100") +
     theme(
-      axis.text.x = element_text(angle = 45, hjust = 1, size = 8)
+      axis.text.x = element_text(angle = 45, hjust = 1, size = 8),
+      legend.position = "bottom"
     )
 
 ```
@@ -149,11 +124,11 @@ Hydroelectric generation is subject to two major forces: river flows and unit ma
 #### Lag Plot
 
 ```{r}
-#| fig.height = 6
-
+#| fig-height: 6
+#| fig-width: 8
 
   train %>% 
-    gg_lag(value, geom = "point", lags = 1:12) +
+    gg_lag(value, geom = "point", lags = 1:12, size = 2) +
     theme_bw() +
     ggtitle("Lag Plot:  Industrial Production, Consumer Goods") +
     ylab("Index, 2017=100")
@@ -177,25 +152,11 @@ Hydroelectric generation is subject to two major forces: river flows and unit ma
 
 ```{r}
 
-
-  # Guerrero lambda
-  lambda <- train %>% 
-    features(value, features = guerrero) %>% 
-    pull(lambda_guerrero)
   lambda = 0
   
-  # Trend captures water-year
   train %>% 
     model(
-      STL(box_cox(value, lambda) ~ trend() + season(), robust = TRUE)
-    ) %>% 
-    components() %>% 
-    autoplot() +
-    theme_bw()
-  
-  train %>% 
-    model(
-      STL(value ~ trend() + season(), robust = TRUE)
+      STL(box_cox(value, lambda) ~ trend(window = 21) + season(window = "periodic"), robust = TRUE)
     ) %>% 
     components() %>% 
     autoplot() +
@@ -214,98 +175,28 @@ Hydroelectric generation is subject to two major forces: river flows and unit ma
       "naive" = NAIVE(value),
       "snaive" = SNAIVE(value ~ lag("year")),
       "trend" = RW(value ~ drift()),
-      "ets_add" = ETS(value ~ error("A") + trend("A") + season("A")),
-      "ets_mult" = ETS(value ~ error("M") + trend("A") + season("M")),
-      "ets_add_bc" = ETS(box_cox(value, lambda) ~ error("A") + trend("A") + season("A")),
-      "ets_mult_bc" = ETS(box_cox(value, lambda) ~ error("M") + trend("A") + season("M")),
+      "ets_add" = ETS(value ~ error("A") + trend("A") + season("A"))
+      # "ets_mult" = ETS(value ~ error("M") + trend("A") + season("M")),
+      # "ets_add_bc" = ETS(box_cox(value, lambda) ~ error("A") + trend("A") + season("A")),
+      # "ets_mult_bc" = ETS(box_cox(value, lambda) ~ error("M") + trend("A") + season("M")),
     )
   
 ```
 
-#### Training Set Metrics
-
-```{r}
-
-  glance(fit)
-
-```
-
-#### Residuals
-
-```{r}
-#| eval: false
-#| echo: false
-
-  fit.resid <- augment(fit)
-  autoplot(fit.resid, .innov) +
-    facet_grid(.model ~ ., scales = "free") 
-
-```
-
-##### NAIVE
-
-The naive model displays significant autocorrelation in the residuals and a non-normal distribution.
-
-```{r}
-
-  fit %>% 
-    select(naive) %>% 
-    gg_tsresiduals()
-
-```
-
-##### SNAIVE
-
-The seasonal naive model again shows significant autocorrelation, though at lag 1.
-
-```{r}
-
-  fit %>% 
-    select(snaive) %>% 
-    gg_tsresiduals()
-
-```
-
-##### ETS - Additive
-
-```{r}
-
-  fit %>% 
-    select(ets_add) %>% 
-    gg_tsresiduals()
-
-```
-
-##### ETS - Multiplicative
-
-```{r}
-
-  fit %>% 
-    select(ets_mult) %>% 
-    gg_tsresiduals()
-
-```
-
-##### ETS - Auto
-
-```{r}
-
-  fit %>% 
-    select(ets_auto) %>% 
-    gg_tsresiduals()
-
-```
 
 ### Forecast
 
 ```{r}
+#| fig-width: 8
+
 
   fx <- fit %>% 
       forecast(new_data = test)
 
   fx %>% autoplot(
-        data %>% filter(year(date) >= 2018),
-        level = NULL
+        data %>% filter(year(date) >= 2021),
+        level = NULL,
+        linewidth = .75
       ) +
         theme_bw() +
         ggtitle("Forecasts for Industrial Production, Consumer Goods")
@@ -314,15 +205,29 @@ The seasonal naive model again shows significant autocorrelation, though at lag 
 
 #### Test Set Metrics
 
-The Multiplicative ETS model scores best on the test set prediction with RMSE, MAE, and MAPE all minimized. However, surprisingly, the seasonal naive model did not score all that much worse, with a MAPE 1.3% higher and lower than all others.
+Contrary to expectations, the Naive model outperforms the other models based on the RMSE, MAE, and MAPE metrics. Some skepticism is required before this method is adopted. The biggest problem is that the Naive forecast will differ vastly depending on what month the training data ends. If the training set had ended in April, when the seasonality of the index is at it's lowest point, a naive forecast will underestimate the value for nearly all test set observations. Because the training set ended in June 2022 which is an average point of the year, it produced a decent forecast. The trend model, which is the second best according to the metrics, faces similar concerns. 
 
 ```{r}
-  accuracy(fx, test)
+
+  accuracy(fx, test, measures = list(RMSE = RMSE, MSE = MSE, MAPE = MAPE))
+
 ```
 
-This period featured some interesting results which may overshadow the prediction metrics on a single year. 2018 was a high water year, while 2019 through 2021 were below average water years, and 2022 was an above average water year. Training on just the training dataset, this will indicate a declining trend, which exists solely from this exogenous factor. The season naive model produced a poor forecast, but because 2022 happened to peaked and trough the same months as 2021, it was not too bad on the metrics, but purely coincidental. A more thorough approach to evaluating these forecasts would be to use time series cross validation to determine which model produces the best forecast on average.
+
+A better metric to gauge the forecast would be the Continuous Ranked Probability Score, since that considers the entire probability distribution rather than just the point estimate. This metric finds the Seasonal Naive model to be a better and ranks the Naive and Trend models to be the two worst models. 
+
+```{r}
+
+accuracy(fx, test, measures = list(CRPS = CRPS))
+
+```
+
+At first glance, it is surprising that the ETS model was outperformed by such a simple model. Much of this is due to exogenous factors in the macroeconomy. Coming out of COVID, the economy began to overheat as evidenced by rising inflation. The Federal Reserve in turn began raising interest rates to cool the economy. The training set we used ended in June 2022 as inflation rates were still increasing and the Industrial Production Consumer Goods index was increasing at a rapid rate. But the interest rates have been cooling the economy over the past year which has dampened industrial production. The ETS model assumes a constant trend and maintains this higher rate of growth, producing a bad forecast. The Seasonal Naive model simply takes the prior years' value, which removes any trend and happens to produce a better forecast in this instance. 
+
 
 ## Cross Validation
+
+A better approach to determine which forecast model works best would be to evaluate the forecast over multiple time periods using cross validation. 
 
 ### Data Preparation
 
@@ -331,9 +236,8 @@ This period featured some interesting results which may overshadow the predictio
   # Create CV dataset
   train.cv <- train %>% 
     # filter(year(date) < 2022) %>% 
-    stretch_tsibble(.init = 24, .step = 6)
-  test.cv <- test %>% 
-    stretch_tsibble(.init = 1, .step = 1)
+    stretch_tsibble(.init = 24, .step = 1)
+ 
   
   # Number of groups
   max(train.cv$.id)
@@ -351,10 +255,10 @@ This period featured some interesting results which may overshadow the predictio
       "naive" = NAIVE(value),
       "snaive" = SNAIVE(value ~ lag("year")),
       "trend" = RW(value ~ drift()),
-      "ets_add" = ETS(value ~ error("A") + trend("A") + season("A")),
-      "ets_mult" = ETS(value ~ error("M") + trend("A") + season("M")),
-      "ets_add_bc" = ETS(box_cox(value, lambda) ~ error("A") + trend("A") + season("A")),
-      "ets_mult_bc" = ETS(box_cox(value, lambda) ~ error("M") + trend("A") + season("M")),
+      "ets_add" = ETS(value ~ error("A") + trend("A") + season("A"))
+      # "ets_mult" = ETS(value ~ error("M") + trend("A") + season("M")),
+      # "ets_add_bc" = ETS(box_cox(value, lambda) ~ error("A") + trend("A") + season("A")),
+      # "ets_mult_bc" = ETS(box_cox(value, lambda) ~ error("M") + trend("A") + season("M")),
     )
 
 ```
@@ -367,50 +271,22 @@ This period featured some interesting results which may overshadow the predictio
     accuracy() %>% 
     group_by(.model, .type) %>% 
     summarize(
-      across(c(ME, RMSE, MAE, MPE, MAPE, MASE, RMSSE), \(x){mean(x, na.rm = T)})
+      across(c(RMSE, MAE, MAPE), \(x){mean(x, na.rm = T)})
     )
 
 ```
 
-### Forecast
+Cross validation demonstrates that, on average, the ETS model is much more predictive than the other models with a much lower RMSE, MAE, and MAPE. It also demonstrates the art of predictive analytics and the need for an understanding of the data being analyzed. A practiced forecaster may have understood the exogenous factors at work that could suppress future growth rates and applied a dampened ETS model which would have proved to be much more accurate.
 
 ```{r}
 
-  fx.cv <- fit.cv %>% 
-    forecast(new_data = test.cv) 
+train %>% 
+  model(ETS(value ~ error("A") + trend("Ad") + season("A"))) %>% 
+  forecast(new_data = test) %>% 
+  autoplot(
+    data %>% filter(year(date) >= 2020),
+    linewidth = .75
+  )
 
 ```
 
-#### Test Set Metrics
-
-```{r}
-
-  
-  
-  fx.cv %>% 
-    accuracy(test.cv) %>% 
-    group_by(.model, .type) %>% 
-    summarize(
-      across(c(ME, RMSE, MAE, MPE, MAPE, MASE, RMSSE), \(x){mean(x, na.rm = T)})
-    )
-
-```
-
-```{r}
-
-  fx.cv |>
-    accuracy(test.cv, by = c("h", ".model")) |>
-    ggplot(aes(x = h, y = RMSE)) +
-    geom_point()
-
-  cv.results <- fx.cv %>% 
-    accuracy(test.cv, by = c(".id", "date", ".model")) 
-
-  cv.results %>% 
-    ggplot(aes(x = date, y = RMSE, color = .model)) +
-    facet_grid(. ~ .model) +
-    # geom_boxplot(color = "black") +
-    geom_point(aes(group = interaction(.model, .id))) +
-    geom_smooth(method = "lm")
-
-```
