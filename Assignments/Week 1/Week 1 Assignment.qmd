@@ -20,16 +20,22 @@ knitr::opts_chunk$set(
 
 library(tidyverse)
 library(fpp3)
+library(fredr)
 
 theme_set(theme_bw())
 
 if(basename(getwd()) != "Week 1") setwd(file.path(getwd(), "Assignments", "Week 1"))
 
-data.list <- readRDS("Data.RDS")
 
-data <- data.list[[1]]
-hydro.cap <- data.list[[2]]
-gc.gen <- data.list[[3]]
+data <- fredr("IPB51000N") %>% 
+  mutate(date = yearmonth(date)) %>% 
+  tsibble(index = date, key = series_id)
+
+# data.list <- readRDS("Data.RDS")
+# 
+# data <- data.list[[1]]
+# hydro.cap <- data.list[[2]]
+# gc.gen <- data.list[[3]]
 
 ```
 
@@ -88,11 +94,11 @@ The training dataset is defined as the years 2018 through 2021. The test dataset
 ```{r}
 
 train <- data %>% 
-  filter(year(period) < 2022) %>% 
-  filter(year(period) >= 2018)
+  filter(year(date) < 2022) %>% 
+  filter(year(date) >= 2018)
 
 test <- data %>%
-  filter(year(period) == 2022)
+  filter(year(date) == 2022)
 
 ```
 
@@ -107,8 +113,8 @@ Hydroelectric generation is subject to two major forces: river flows and unit ma
   train %>% 
     autoplot(value) +
     theme_bw() +
-    ggtitle("Northwest hydroelectric net generation") +
-    ylab("billion kilowatthours")
+    ggtitle("Industrial Production, Consumer Goods") +
+    ylab("Index, 2017=100")
 
 ```
 
@@ -119,8 +125,8 @@ Hydroelectric generation is subject to two major forces: river flows and unit ma
   train %>% 
     gg_season(value, labels = "both") +
     theme_bw() +
-    ggtitle("Seasonal Plot: Northwest hydroelectric net generation") +
-    ylab("billion kilowatthours")
+    ggtitle("Seasonal Plot: Industrial Production, Consumer Goods") +
+    ylab("Index, 2017=100")
 
 ```
 
@@ -132,8 +138,8 @@ Hydroelectric generation is subject to two major forces: river flows and unit ma
     gg_subseries(value) +
     theme_bw() +
     geom_point() +
-    ggtitle("Seasonal Plot: Northwest hydroelectric net generation") +
-    ylab("billion kilowatthours") +
+    ggtitle("Seasonal Subseries Plot: Industrial Production, Consumer Goods") +
+    ylab("Index, 2017=100") +
     theme(
       axis.text.x = element_text(angle = 45, hjust = 1, size = 8)
     )
@@ -149,8 +155,8 @@ Hydroelectric generation is subject to two major forces: river flows and unit ma
   train %>% 
     gg_lag(value, geom = "point", lags = 1:12) +
     theme_bw() +
-    ggtitle("Lag Plot: Northwest hydroelectric net generation") +
-    ylab("billion kilowatthours")
+    ggtitle("Lag Plot:  Industrial Production, Consumer Goods") +
+    ylab("Index, 2017=100")
 
 ```
 
@@ -163,7 +169,7 @@ Hydroelectric generation is subject to two major forces: river flows and unit ma
     ACF(value) %>% 
     autoplot() +
     theme_bw() +
-    ggtitle("Autocorrelation Plot: Northwest hydroelectric net generation")
+    ggtitle("Autocorrelation Plot:  Industrial Production, Consumer Goods")
 
 ```
 
@@ -181,7 +187,7 @@ Hydroelectric generation is subject to two major forces: river flows and unit ma
   # Trend captures water-year
   train %>% 
     model(
-      STL(box_cox(value, lambda) ~ trend(window = 33) + season(window = 21), robust = TRUE)
+      STL(box_cox(value, lambda) ~ trend() + season(), robust = TRUE)
     ) %>% 
     components() %>% 
     autoplot() +
@@ -189,7 +195,7 @@ Hydroelectric generation is subject to two major forces: river flows and unit ma
   
   train %>% 
     model(
-      STL(value ~ trend(window = 33) + season(window = 21), robust = TRUE)
+      STL(value ~ trend() + season(), robust = TRUE)
     ) %>% 
     components() %>% 
     autoplot() +
@@ -298,11 +304,11 @@ The seasonal naive model again shows significant autocorrelation, though at lag 
       forecast(new_data = test)
 
   fx %>% autoplot(
-        data %>% filter(year(period) >= 2020),
+        data %>% filter(year(date) >= 2018),
         level = NULL
       ) +
         theme_bw() +
-        ggtitle("Forecasts for Northwest Hydro Generation")
+        ggtitle("Forecasts for Industrial Production, Consumer Goods")
 
 ```
 
@@ -323,9 +329,9 @@ This period featured some interesting results which may overshadow the predictio
 ```{r}
 
   # Create CV dataset
-  train.cv <- data %>% 
-    filter(year(period) < 2022) %>% 
-    stretch_tsibble(.init = 36, .step = 6)
+  train.cv <- train %>% 
+    # filter(year(date) < 2022) %>% 
+    stretch_tsibble(.init = 24, .step = 6)
   test.cv <- test %>% 
     stretch_tsibble(.init = 1, .step = 1)
   
@@ -398,14 +404,13 @@ This period featured some interesting results which may overshadow the predictio
     geom_point()
 
   cv.results <- fx.cv %>% 
-    accuracy(test.cv, by = c(".id", "period", ".model")) 
+    accuracy(test.cv, by = c(".id", "date", ".model")) 
 
   cv.results %>% 
-    ggplot(aes(x = period, y = RMSE, color = .model)) +
+    ggplot(aes(x = date, y = RMSE, color = .model)) +
     facet_grid(. ~ .model) +
     # geom_boxplot(color = "black") +
     geom_point(aes(group = interaction(.model, .id))) +
     geom_smooth(method = "lm")
 
 ```
-
