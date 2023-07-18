@@ -1,0 +1,97 @@
+---
+title: "Midterm Project"
+author: Shaun Harrington
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: columns
+    vertical_layout: fill
+    logo: BC Logo3_Small.png
+    theme: 
+      bootswatch: journal
+      primary: "#8a100b"
+---
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+
+```
+
+Column {data-width=650}
+-----------------------------------------------------------------------
+
+### Abstract
+
+> The poster will include an abstract summarizing the problem, the significance of the problem, the methods, and the results in about 200 words.
+
+```{r}
+
+```
+
+
+### Introduction & Significance
+
+> An introduction section with a discussion of three to five references associated with the topic (e.g., energy forecasting if that is what you are doing) and the selected methods (e.g., ETS, ARIMA, Regression, Ensemble).
+
+```{r}
+
+```
+
+
+
+Column {data-width=350}
+-----------------------------------------------------------------------
+
+### Methods
+
+> A methods section discussing the chosen methods and formulation. 
+
+```{r}
+
+```
+
+
+Column {data-width=350}
+-----------------------------------------------------------------------
+
+### Results
+
+> A results section that illustrates the model performance. 
+
+```{r}
+
+```
+
+
+
+Column {data-width=350}
+-----------------------------------------------------------------------
+
+### Discussion
+
+> A discussion section that indicates the utility of the models. 
+
+```{r}
+
+```
+
+### Conclusion
+
+```{r}
+
+```
+
+
+### References
+
+```{r}
+
+```
+
+
+###
+
+```{r logo, echo=FALSE, out.width='300px', fig.align='right'}
+
+knitr::include_graphics("BC Logo3.png")
+
+```
