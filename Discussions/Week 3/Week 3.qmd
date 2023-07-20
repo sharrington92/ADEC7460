@@ -18,7 +18,6 @@ knitr::opts_chunk$set(
 )
 
 library(tidyverse)
-library(fredr)
 library(fpp3)
 
 theme_set(theme_bw())
@@ -55,7 +54,6 @@ The below code gave me issues. The original data are weekly cases. I first, as s
 
 ```{r}
 #| eval: false
-#| echo: false
 
 data <- read_csv("hungary_chickenpox.csv") %>%
   rename_with(~str_to_lower(.x)) %>%
