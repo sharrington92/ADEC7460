@@ -1,5 +1,5 @@
 ---
-title: "Midterm Project"
+title: "Columbia River KCFS Flows"
 author: Shaun Harrington
 output: 
   flexdashboard::flex_dashboard:
@@ -14,39 +14,102 @@ output:
 ```{r setup, include=FALSE}
 library(flexdashboard)
 
+library(tidyverse)
+  library(fpp3)
+  
+  data <- read_csv("Columbia River Flows.csv") %>% 
+    mutate(
+      date = as.Date(datetime) %>% yearmonth(),
+      year = year(date),
+      month = month(date)
+    ) %>% 
+    group_by(date, site_name) %>% 
+    summarize(flow = mean(flow_cfs, na.rm = T)/1000, gage_feet = mean(gage_feet)) %>% 
+    ungroup() 
+  
+  theme_set(theme_bw())
+
+  
+  test <- data %>% 
+    slice_max(n = 12, order_by = date) %>% 
+    tsibble()
+  
+  train <- data %>% 
+    anti_join(y = as_tibble(test), by = "date") %>% 
+    tsibble()
+
+  fit <- readRDS("fit.RDS")
+  fx <- readRDS("fx.RDS")
+  
 ```
 
-Column {data-width=650}
+Column {data-width=200}
 -----------------------------------------------------------------------
 
-### Abstract
+### Abstract {data-height=100}
 
-> The poster will include an abstract summarizing the problem, the significance of the problem, the methods, and the results in about 200 words.
+<!-- The poster will include an abstract summarizing the problem, the significance of the problem, the methods, and the results in about 200 words. -->
 
-```{r}
-
-```
+The Columbia River provides electrical generation for 14 dams in the Pacific Northwest. The years vary by a large margin and recent months are loosely correlated with the present, providing a difficult situation for medium and long term forecasting. This analysis compares the out-of-sample prediction by means of OLS, ARIMA, ETS, and ensemble models. It is found that ARIMA can be useful for shorter-term forecasts but an OLS model that evaluates the historical seasonal mean is a more reliable method.
 
 
 ### Introduction & Significance
 
-> An introduction section with a discussion of three to five references associated with the topic (e.g., energy forecasting if that is what you are doing) and the selected methods (e.g., ETS, ARIMA, Regression, Ensemble).
+<!-- An introduction section with a discussion of three to five references associated with the topic (e.g., energy forecasting if that is what you are doing) and the selected methods (e.g., ETS, ARIMA, Regression, Ensemble). -->
 
-```{r}
+The Columbia River begins in British Columbia, Canada running through Washington state to the Oregon border where it empties into the Pacific Ocean. There are 14 hydroelectric dams along this river, 11 of which are in the US and 3 in Canada. The amount of water that flows through largely determines how much electricity these plants generate, much of which is sold to California. While rains can affect the amount of water in the river, the winter snow pack and heat progression throughout Spring and Summer largely determine how much water will flow in the river. 
+
+An understanding of these flows are important because they determine when turbines should be brought offline for upgrades or repairs, and for calculating if power must be purchased from the wholesale market. To predict these flows, three models will be estimated: ETS, ARIMA, and linear model. A fourth ensemble model will be the average of these. 
+
+####
+
+```{r fig.height=3, fig.width=4.75}
+
+train %>% 
+    autoplot(flow) +
+    ggtitle("Columbia River Flow (kcfs)")
 
 ```
 
 
 
-Column {data-width=350}
+Column {data-width=300}
 -----------------------------------------------------------------------
 
 ### Methods
 
-> A methods section discussing the chosen methods and formulation. 
+<!-- A methods section discussing the chosen methods and formulation.  -->
 
-```{r}
+#### 
 
+```{r fig.height=4, fig.width=6}
+train %>% 
+  gg_season(flow) +
+  ggtitle("Seasonality Plot: Columbia River Flow (kcfs)") +
+  xlab("Month") +
+  theme(legend.position = c(.9, .7))
+```
+
+
+##### **Linear Model**
+
+The linear model is a tried and true model used in various situations. For flow prediction, only the seasonality, or month, will be used as an exogenous factor. While climate change may introduce a trend to river flows in the very long run, a trend will not be included in this model since we are not making long-term predictions. As such, this model will predict the monthly average within the training set for each month in the test set.
+
+##### **ETS**
+
+The ETS model will be estimated for the level and seasonality. Once again, and for similar reasons, a trend will not be included. 
+
+##### **ARIMA**
+
+The ARIMA model will be determined through the Hyndman-Khandakar algorithm as specified in the *fable* package. 
+
+```{r fig.height=4, fig.width=7}
+train %>% 
+  gg_tsdisplay(
+    #difference(flow, 12) %>% difference(),
+    flow,
+    plot_type = "partial", lag_max = 36
+  )
 ```
 
 
@@ -55,42 +118,80 @@ Column {data-width=350}
 
 ### Results
 
-> A results section that illustrates the model performance. 
+<!-- A results section that illustrates the model performance.  -->
+The estimated models produced the following forecasts on the test set:
+
+####
+
+```{r fig.height=4.5, fig.width=8}
+fx %>% 
+  autoplot(
+    data %>% filter(year(date)>2021),
+    # level = NULL
+  ) +
+  ggtitle("Monthly Columbia River Flow Out-of-Sample Forecasts") +
+  facet_grid(.model ~ .) +
+  geom_label(
+    data = fx %>% 
+      accuracy(
+        test, 
+        measures = list(point_accuracy_measures, distribution_accuracy_measures)
+      ),
+    aes(x = -Inf, y = Inf, label = paste(
+      " RMSE:", round(RMSE, 1),
+      "\n", "MAPE: ", round(MAPE, 1),
+      "\n", "CRPS: ", round(CRPS, 1)
+    )),
+    hjust = 0, vjust = 1
+  )
+
+```
+
+###### ARIMA Statistics:
+
+
+
 
 ```{r}
+fit %>% 
+  select(arima) %>% 
+  report()
+
+```
+
+###### ETS Statistics:
+
+```{r}
+fit %>% 
+  select(ets) %>% 
+  report()
 
 ```
 
 
+####
 
-Column {data-width=350}
+Column {data-width=200}
 -----------------------------------------------------------------------
 
-### Discussion
+### Discussion {data-height=1200}
 
-> A discussion section that indicates the utility of the models. 
+<!-- A discussion section that indicates the utility of the models.  -->
 
-```{r}
+The LM does minimize the RMSE, MAPE, and CRPS. A complicating factor is that while strong seasonality does exist, the amount of water in a given year varies by a good margin as do the springs. A cold spring that suddenly turns hot will cause snow to melt faster causing large peaks. In contrast, a warm spring will cause the snow to begin melting earlier, but not necessarily at a fast rate. The linear model predicts each month to be the historical average, producing a decent forecast. 
 
-```
+The ETS and ARIMA models both overestimate the actual flow, likely a result of the high water year for the last period of the training set. The positive ma1 term and negative ma2 term indicate that when there is this large change in the flow, the following month is usually the same direction, but the month after that results in a larger contraction in the opposite direction. This lines up with the warm/cold spring theory postulated in the previous paragraph.
+
+A gamma value near zero in the ETS model indicates that river flows do not respond very much to changes in the prior season. The alpha equal to almost .5 indicates some response to recent months, but not overly so. Together these help explain why the linear model outperformed the other two, more complicated models: the prior years' values are not a good indicator for the current year, and recent months can only go so far. When no exogenous variables are considered, this is nearly a random walk, for which the historical mean is the best approximate. 
+
 
 ### Conclusion
 
-```{r}
+Medium and long term predictions of river flows are very difficult without exogenous factors. The higher correlation with more recent periods could imply that short-term forecasts are more achievable. A good approach for the long term is to simply use the historical average, an ARIMA model may prove useful for the shorter term forecasts. Further study using cross validation should be done to determine if a modified ensemble method could be beneficial where the ARIMA model is given a higher weight for the first couple of months and the linear model thereafter. 
 
-```
+### {data-height=200}
 
-
-### References
-
-```{r}
-
-```
-
-
-###
-
-```{r logo, echo=FALSE, out.width='300px', fig.align='right'}
+```{r logo, echo=FALSE, out.width='50px', fig.align='right', out.height='10px'}
 
 knitr::include_graphics("BC Logo3.png")
 
