@@ -33,7 +33,7 @@ if(basename(getwd()) != "Week 1") setwd(file.path(getwd(), "Assignments", "Week 
 
 ### Data Series
 
-The series that will be examined today is the non-seasonally-adjusted Industrial Production Consumer Goods Index. This data comes from the Federal Reserve of St. Louis. 
+The series that will be examined today is the non-seasonally-adjusted Industrial Production Consumer Goods Index. This data comes from the Federal Reserve of St. Louis.
 
 ```{r}
 
@@ -47,10 +47,9 @@ data <- fredr("IPB51000N") %>%
 
 ```
 
-
 ## Preliminary Analysis
 
-The test dataset are the 12 most recent observations while the training set are the 48 most recent prior to that. 
+The test dataset are the 12 most recent observations while the training set are the 48 most recent prior to that.
 
 ### Data Prep
 
@@ -72,7 +71,7 @@ train <- data %>%
 
 #### Time Plot
 
-Industrial Production was severely impacted by the COVID-19 pandemic. 
+Industrial Production was severely impacted by the COVID-19 pandemic.
 
 ```{r}
   
@@ -183,7 +182,6 @@ COVID-19 caused the seasonality to differ in 2020, though it appears mostly typi
   
 ```
 
-
 ### Forecast
 
 ```{r}
@@ -205,7 +203,7 @@ COVID-19 caused the seasonality to differ in 2020, though it appears mostly typi
 
 #### Test Set Metrics
 
-Contrary to expectations, the Naive model outperforms the other models based on the RMSE, MAE, and MAPE metrics. Some skepticism is required before this method is adopted. The biggest problem is that the Naive forecast will differ vastly depending on what month the training data ends. If the training set had ended in April, when the seasonality of the index is at it's lowest point, a naive forecast will underestimate the value for nearly all test set observations. Because the training set ended in June 2022 which is an average point of the year, it produced a decent forecast. The trend model, which is the second best according to the metrics, faces similar concerns. 
+Contrary to expectations, the Naive model outperforms the other models based on the RMSE, MAE, and MAPE metrics. Some skepticism is required before this method is adopted. The biggest problem is that the Naive forecast will differ vastly depending on what month the training data ends. If the training set had ended in April, when the seasonality of the index is at it's lowest point, a naive forecast will underestimate the value for nearly all test set observations. Because the training set ended in June 2022 which is an average point of the year, it produced a decent forecast. The trend model, which is the second best according to the metrics, faces similar concerns.
 
 ```{r}
 
@@ -213,8 +211,7 @@ Contrary to expectations, the Naive model outperforms the other models based on 
 
 ```
 
-
-A better metric to gauge the forecast would be the Continuous Ranked Probability Score, since that considers the entire probability distribution rather than just the point estimate. This metric finds the Seasonal Naive model to be a better and ranks the Naive and Trend models to be the two worst models. 
+A better metric to gauge the forecast would be the Continuous Ranked Probability Score, since that considers the entire probability distribution rather than just the point estimate. This metric finds the Seasonal Naive model to be a better and ranks the Naive and Trend models to be the two worst models.
 
 ```{r}
 
@@ -222,12 +219,11 @@ accuracy(fx, test, measures = list(CRPS = CRPS))
 
 ```
 
-At first glance, it is surprising that the ETS model was outperformed by such a simple model. Much of this is due to exogenous factors in the macroeconomy. Coming out of COVID, the economy began to overheat as evidenced by rising inflation. The Federal Reserve in turn began raising interest rates to cool the economy. The training set we used ended in June 2022 as inflation rates were still increasing and the Industrial Production Consumer Goods index was increasing at a rapid rate. But the interest rates have been cooling the economy over the past year which has dampened industrial production. The ETS model assumes a constant trend and maintains this higher rate of growth, producing a bad forecast. The Seasonal Naive model simply takes the prior years' value, which removes any trend and happens to produce a better forecast in this instance. 
-
+At first glance, it is surprising that the ETS model was outperformed by such a simple model. Much of this is due to exogenous factors in the macroeconomy. Coming out of COVID, the economy began to overheat as evidenced by rising inflation. The Federal Reserve in turn began raising interest rates to cool the economy. The training set we used ended in June 2022 as inflation rates were still increasing and the Industrial Production Consumer Goods index was increasing at a rapid rate. But the interest rates have been cooling the economy over the past year which has dampened industrial production. The ETS model assumes a constant trend and maintains this higher rate of growth, producing a bad forecast. The Seasonal Naive model simply takes the prior years' value, which removes any trend and happens to produce a better forecast in this instance.
 
 ## Cross Validation
 
-A better approach to determine which forecast model works best would be to evaluate the forecast over multiple time periods using cross validation. 
+A better approach to determine which forecast model works best would be to evaluate the forecast over multiple time periods using cross validation.
 
 ### Data Preparation
 
@@ -289,4 +285,3 @@ train %>%
   )
 
 ```
-
