@@ -1,0 +1,234 @@
+---
+title: "Week 3 Discussion"
+author: "Shaun Harrington"
+format: html
+editor_options: 
+  chunk_output_type: console
+---
+
+## Setup
+
+```{r}
+#| warning: false
+
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE
+)
+
+library(tidyverse)
+library(fredr)
+library(fpp3)
+
+theme_set(theme_bw())
+
+if(basename(getwd()) != "Week 3") setwd(file.path(getwd(), "Discussions", "Week 3"))
+
+url <- "https://archive.ics.uci.edu/static/public/580/hungarian+chickenpox+cases.zip"
+
+```
+
+## Preliminary Analysis
+
+### Get Chickenpox Data
+
+> https://archive.ics.uci.edu/dataset/580/hungarian+chickenpox+cases
+
+```{r}
+ 
+if(!("hungary_chickenpox.csv" %in% list.files(getwd()))){
+  download.file(url, destfile = file.path(getwd(), "Data.zip"))  
+}
+unzip("Data.zip")
+
+
+
+
+
+```
+
+
+### Data Preparation
+
+The below code gave me issues. The original data are weekly cases. I first, as shown in the below code, was grouping by the year and month of the date column and summing the cases to get monthly cases. However, this was messing up the evaluation since weeks don't neatly fit into months. So some month were getting abnormally large cases while the next was getting abnormally small case counts. 
+
+```{r}
+#| eval: false
+#| echo: false
+
+data <- read_csv("hungary_chickenpox.csv") %>%
+  rename_with(~str_to_lower(.x)) %>%
+  rowwise() %>%
+  mutate(
+    date = dmy(date),
+    year = year(date),
+    month = month(date),
+    cases = sum(c_across(!contains("date")))
+  ) %>%
+  ungroup() %>%
+  group_by(year, month) %>%
+  summarize(cases = sum(cases)) %>%
+  ungroup() %>%
+  mutate(
+    date = ymd(paste(year, month, 1)) %>% yearmonth()
+  ) %>%
+  tsibble(index = date)
+
+
+
+
+```
+
+I changed the grouping methodology. Instead of simple taking the year and month from the date column, I first linearly interpolate the weekly case counts to daily case counts. While this is not exact and is sure to be incorrect, it provides a much closer approximation to the monthly amounts.
+
+```{r}
+
+data <- read_csv("hungary_chickenpox.csv") %>% 
+  rename_with(~str_to_lower(.x)) %>% 
+  rowwise() %>% 
+  mutate(
+    date = dmy(date),
+    # year = year(date),
+    # month = month(date),
+    cases = sum(c_across(!contains("date")))
+  ) %>% 
+  ungroup()# %>% 
+
+data <- data %>% 
+  select(date, cases) %>% 
+  complete(date = seq.Date(min(data$date), to = max(data$date), by = "1 day")) %>% 
+  mutate(
+    cases.approx = zoo::na.approx(cases/7),
+    year = year(date),
+    month = month(date),
+  ) %>% 
+  group_by(year, month) %>% 
+  summarize(cases = sum(cases.approx)) %>% 
+  ungroup() %>% 
+  mutate(
+    date = ymd(paste(year, month, 1)) %>% yearmonth()
+  ) %>% 
+  tsibble(index = date)
+
+
+
+
+```
+
+I then split the data where the test set is the last 6 months and the training set is everything prior to that.
+
+```{r}
+
+test <- data %>% 
+  slice_max(order_by = date,n = 6) %>% 
+  tsibble(index = date)
+train <- data %>% 
+  anti_join(y = test, by = "date") %>% 
+  tsibble(index = date)
+
+```
+
+
+
+### Data Exploration
+
+#### Time Plots 
+
+```{r}
+#| fig-height: 4
+
+train %>% 
+  autoplot(cases) +
+  ggtitle("Monthly Chickenpox Cases in Hungary")
+
+```
+
+#### Seasonality Plots
+
+High volatility and more cases in Winter and Spring that begins in Fall.
+
+```{r}
+#| fig-height: 4
+
+train %>% 
+  gg_season(cases) +
+  ggtitle("Seasonality Plot: Monthly Chickenpox Cases in Hungary")
+
+```
+
+~~The August and September values are a bit suspicious. It seems highly unlikely that roughly two values are used for each month. I would want to check the data source and see if they are doing anything to these numbers.~~
+
+**No longer applicable after modifying the data preparation.**
+
+
+#### Autocorrelation
+
+A seasonal difference alone does not appear to make the data stationary. This can be seen in the time series plot and easily in the ACF
+
+
+```{r}
+
+train %>% 
+  gg_tsdisplay(difference(log(cases), 12) %>% difference(), plot_type = "partial", lag_max = 36)
+
+```
+
+
+## Modeling
+
+#### Estimation
+
+A log scale will be used to help with the changing volatility. An additive ETS model and ARIMA will be fit.
+
+```{r}
+
+
+(fit <- train %>% 
+  model(
+    "ets" = ETS(log(cases) ~ error("A") + trend("A") + season("A")),
+    "arima" = ARIMA(log(cases))
+  ))
+
+
+```
+
+
+The ARIMA model minimizes the AICc. 
+
+```{r}
+glance(fit)
+```
+
+
+### Forecast
+
+The models were trained on data prior to `r max(as.Date(train$date)) + months(1)`. The forecast period is the interval `r lubridate::interval(min(as.Date(test$date)), max(as.Date(test$date)))`. 
+
+
+```{r}
+
+  fx <- fit %>% 
+        forecast(test)
+  
+
+  fx %>% 
+    autoplot(
+        data %>% filter(year(date)>2013),
+        level = NULL
+      ) +
+        ggtitle("Monthly Chickenpox Case Out-of-Sample Forecast")
+
+```
+
+#### Metrics
+
+The ARIMA model does outperform the ETS model on the out-of-sample forecast with a lower RMSE by 230 cases. The bias does seem quite considerable, as evidenced by the Mean Error, which could indicate that more analysis should be performed before a final model is selected. 
+
+```{r}
+
+fx %>% 
+  accuracy(test)
+
+```
+
