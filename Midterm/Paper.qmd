@@ -107,7 +107,7 @@ train %>%
   theme(legend.position = c(.9, .7))
 ```
 
-Because of the consequential nature of river flows, the literature abounds in various methods. The National Oceanic and Atmospheric Administration (NOAA) holds the Northwest River Forecast Center (@NWS) that provides the public with 10-day and 120-day river flow forecasts. 
+Because of the consequential nature of river flows, the literature abounds in various methods. The National Oceanic and Atmospheric Administration (NOAA) holds the Northwest River Forecast Center [@NWS] that provides the public with 10-day and 120-day river flow forecasts. 
 
 @garen_1992 has found an improvement with linear models by implementing three methods: employing principal components regression, using cross validation, and systematic searching for optimal combinations of variables. 
 

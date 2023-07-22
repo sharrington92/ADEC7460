@@ -7,8 +7,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
 
 <meta name="author" content="Shaun Harrington">
+<meta name="dcterms.date" content="2023-07-21">
 
-<title>Columbia River KCFS Flows</title>
+<title>Columbia River Flow Prediction</title>
 <style>
 code{white-space: pre-wrap;}
 span.smallcaps{font-variant: small-caps;}
@@ -55,7 +56,26 @@ div.sourceCode
 @media screen {
 pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
 }
-</style>
+/* CSS for citations */
+div.csl-bib-body { }
+div.csl-entry {
+  clear: both;
+}
+.hanging-indent div.csl-entry {
+  margin-left:2em;
+  text-indent:-2em;
+}
+div.csl-left-margin {
+  min-width:2em;
+  float:left;
+}
+div.csl-right-inline {
+  margin-left:2em;
+  padding-left:1em;
+}
+div.csl-indent {
+  margin-left: 2em;
+}</style>
 
 
 <script src="Paper_files/libs/clipboard/clipboard.min.js"></script>
@@ -69,6 +89,8 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <link href="Paper_files/libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
 <link href="Paper_files/libs/bootstrap/bootstrap.min.css" rel="stylesheet" id="quarto-bootstrap" data-mode="light">
 
+  <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml-full.js" type="text/javascript"></script>
 
 </head>
 
@@ -80,20 +102,33 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 
 <header id="title-block-header" class="quarto-title-block default">
 <div class="quarto-title">
-<h1 class="title">Columbia River KCFS Flows</h1>
+<h1 class="title">Columbia River Flow Prediction</h1>
 </div>
 
 
+<div class="quarto-title-meta-author">
+  <div class="quarto-title-meta-heading">Author</div>
+  <div class="quarto-title-meta-heading">Affiliation</div>
+  
+    <div class="quarto-title-meta-contents">
+    <p class="author">Shaun Harrington </p>
+  </div>
+    <div class="quarto-title-meta-contents">
+        <p class="affiliation">
+            Boston College
+          </p>
+      </div>
+    </div>
 
 <div class="quarto-title-meta">
 
+      
     <div>
-    <div class="quarto-title-meta-heading">Author</div>
+    <div class="quarto-title-meta-heading">Published</div>
     <div class="quarto-title-meta-contents">
-             <p>Shaun Harrington </p>
-          </div>
+      <p class="date">July 21, 2023</p>
+    </div>
   </div>
-    
   
     
   </div>
@@ -101,44 +136,62 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 
 </header>
 
+<p><span class="math display">\[\\[1in]\]</span></p>
 <section id="abstract" class="level3" data-height="100">
 <h3 data-height="100" class="anchored" data-anchor-id="abstract">Abstract</h3>
 <!-- The poster will include an abstract summarizing the problem, the significance of the problem, the methods, and the results in about 200 words. -->
 <p>The Columbia River provides electrical generation for 14 dams in the Pacific Northwest. The years vary by a large margin and recent months are loosely correlated with the present, providing a difficult situation for medium and long term forecasting. This analysis compares the out-of-sample prediction by means of OLS, ARIMA, ETS, and ensemble models. It is found that ARIMA can be useful for shorter-term forecasts but an OLS model that evaluates the historical seasonal mean is a more reliable method.</p>
 <div style="page-break-after: always;"></div>
 </section>
-<section id="introduction-significance" class="level3">
-<h3 class="anchored" data-anchor-id="introduction-significance">Introduction &amp; Significance</h3>
+<section id="introduction" class="level3">
+<h3 class="anchored" data-anchor-id="introduction">Introduction</h3>
 <!-- An introduction section with a discussion of three to five references associated with the topic (e.g., energy forecasting if that is what you are doing) and the selected methods (e.g., ETS, ARIMA, Regression, Ensemble). -->
-<p>The Columbia River begins in British Columbia, Canada running through Washington state to the Oregon border where it empties into the Pacific Ocean. There are 14 hydroelectric dams along this river, 11 of which are in the US and 3 in Canada. The amount of water that flows through largely determines how much electricity these plants generate, much of which is sold to California. While rains can affect the amount of water in the river, the winter snow pack and heat progression throughout Spring and Summer largely determine how much water will flow in the river.</p>
-<p>An understanding of these flows are important because they determine when turbines should be brought offline for upgrades or repairs, and for calculating if power must be purchased from the wholesale market. To predict these flows, three models will be estimated: ETS, ARIMA, and linear model. A fourth ensemble model will be the average of these.</p>
-<section id="section" class="level4">
-<h4 class="anchored" data-anchor-id="section"></h4>
+<p>The Columbia River begins in British Columbia, Canada running through Washington state and then along the Oregon border where it empties into the Pacific Ocean. Fourteen hydroelectric dams-11 American and 3 Canadian- are found along it. Their ability to generate power relies heavily on the river’s water volume, much of which is sold to California.</p>
+<p>While rains can affect the amount of water in the river, the winter snow pack and heat progression throughout Spring and Summer largely determine how much water will flow in the river. The electric utilities that operate these hydroelectric plants must have an understanding of this river to maximize their operations. Short-term river forecasts are essential for daily operations. Hydroelectric plants must maintain their forebay—the body of water just before the dam— within a certain range mandated by the Federal Energy Regulatory Commission. To achieve this, they can manipulate two dials: the flow of water through their turbines and the use of spill gates.</p>
+<p>Generally, water is sent through spill gates only when turbines are operating at their full capacity. In the early summer, when river flow is often at its peak, these dams are unable to fully utilize the excess water for power generation. This necessitates the opening of spill gates. Many of these are manually operated, highlighting the need for reliable river flow forecasts to ensure adequate personnel are on hand to manage the operation. Beyond just meeting regulatory guidelines, operators also aim to maintain the highest forebay level possible, as this allows the system to generate electricity more efficiently.</p>
+<p>Long-term, these forecasts are necessary in scheduling maintenance of the turbines. During low flow periods of the year, plants have ample capacity to handle the water volume. This allows turbines to be shut down for routine maintenance without forsaking any significant amount of potential revenue.</p>
 <div class="cell">
 <div class="sourceCode cell-code" id="cb1"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a>train <span class="sc">%&gt;%</span> </span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a>    <span class="fu">autoplot</span>(flow) <span class="sc">+</span></span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>    <span class="fu">ggtitle</span>(<span class="st">"Columbia River Flow (kcfs)"</span>)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 <div class="cell-output-display">
-<p><img src="Paper_files/figure-html/unnamed-chunk-1-1.png" class="img-fluid" width="456"></p>
+<p><img src="Paper_files/figure-html/unnamed-chunk-1-1.png" class="img-fluid" width="768"></p>
 </div>
 </div>
-</section>
+<p>Between 2010 and 2022, the Columbia river has averaged 122.3 kcfs. The minimum in this period was 55.4 kcfs with a maximum of 302.2 kcfs.</p>
+<div class="cell">
+<div class="sourceCode cell-code" id="cb2"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a>train <span class="sc">%&gt;%</span></span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>  <span class="fu">ggplot</span>(<span class="fu">aes</span>(<span class="at">x =</span> flow)) <span class="sc">+</span> </span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_histogram</span>(<span class="at">binwidth =</span> <span class="dv">25</span>) <span class="sc">+</span></span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a>  <span class="fu">ggtitle</span>(<span class="st">"Columbia River Average Monthly Flow Distribution"</span>) <span class="sc">+</span></span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a>  <span class="fu">xlab</span>(<span class="st">"KCFS"</span>)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="cell-output-display">
+<p><img src="Paper_files/figure-html/unnamed-chunk-2-1.png" class="img-fluid" width="768"></p>
+</div>
+</div>
+<p>The seasonality plot below demonstrates how these flows change throughout a year. A complicating matter is the prediction of peak flows. The winter’s snowpack determines how much water will flow through the water, but the speed at which Spring warms determines when the flow begins to pick up.</p>
+<div class="cell">
+<div class="sourceCode cell-code" id="cb3"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>train <span class="sc">%&gt;%</span> </span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>  <span class="fu">gg_season</span>(flow) <span class="sc">+</span></span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>  <span class="fu">ggtitle</span>(<span class="st">"Seasonality Plot: Columbia River Flow (kcfs)"</span>) <span class="sc">+</span></span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a>  <span class="fu">xlab</span>(<span class="st">"Month"</span>) <span class="sc">+</span></span>
+<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a>  <span class="fu">scale_y_continuous</span>(<span class="st">"kcfs"</span>, <span class="at">breaks =</span> <span class="fu">seq</span>(<span class="dv">0</span>, <span class="dv">400</span>, <span class="dv">50</span>)) <span class="sc">+</span></span>
+<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a>  <span class="fu">theme</span>(<span class="at">legend.position =</span> <span class="fu">c</span>(.<span class="dv">9</span>, .<span class="dv">7</span>))</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="cell-output-display">
+<p><img src="Paper_files/figure-html/unnamed-chunk-3-1.png" class="img-fluid" width="768"></p>
+</div>
+</div>
+<p>Because of the consequential nature of river flows, the literature abounds in various methods. The National Oceanic and Atmospheric Administration (NOAA) holds the Northwest River Forecast Center <span class="citation" data-cites="NWS">(<a href="#ref-NWS" role="doc-biblioref">Service 2023</a>)</span> that provides the public with 10-day and 120-day river flow forecasts.</p>
+<p><span class="citation" data-cites="garen_1992">Garen (<a href="#ref-garen_1992" role="doc-biblioref">1992</a>)</span> has found an improvement with linear models by implementing three methods: employing principal components regression, using cross validation, and systematic searching for optimal combinations of variables.</p>
+<p><span class="citation" data-cites="ghadimi_2022">Danandeh Mehr et al. (<a href="#ref-ghadimi_2022" role="doc-biblioref">2022</a>)</span> compares river forecast accuracy using genetic programming (GP), seasonal autoregressive integrated moving average (SARIMA), and an ensemble dubbed GP-SARIMA. The GP and SARIMA were found to both execute well on a day-ahead forecast, though struggled in the longer-term. The GP-SARIMA model was able to reduce the forecast RMSE by 1/4 in the longer-term.</p>
+<p><span class="citation" data-cites="ilhan_2022">Ilhan (<a href="#ref-ilhan_2022" role="doc-biblioref">2022</a>)</span> compares 102 machine learning models on day-ahead forecasts. While the models produced a spectrum of results, they were able to decrease the MAE and RMSE by considering an ensemble approach that averages their top performing models.</p>
+<p>The approach in this analysis uses classical time series models for predicting one year of monthly river flows. A linear model, ETS, ARIMA, and an ensemble model will be estimated and evaluated on an out-of-sample test set.</p>
 </section>
 <section id="methods" class="level3">
 <h3 class="anchored" data-anchor-id="methods">Methods</h3>
 <!-- A methods section discussing the chosen methods and formulation.  -->
-<section id="section-1" class="level4">
-<h4 class="anchored" data-anchor-id="section-1"></h4>
-<div class="cell">
-<div class="sourceCode cell-code" id="cb2"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a>train <span class="sc">%&gt;%</span> </span>
-<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>  <span class="fu">gg_season</span>(flow) <span class="sc">+</span></span>
-<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>  <span class="fu">ggtitle</span>(<span class="st">"Seasonality Plot: Columbia River Flow (kcfs)"</span>) <span class="sc">+</span></span>
-<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a>  <span class="fu">xlab</span>(<span class="st">"Month"</span>) <span class="sc">+</span></span>
-<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a>  <span class="fu">theme</span>(<span class="at">legend.position =</span> <span class="fu">c</span>(.<span class="dv">9</span>, .<span class="dv">7</span>))</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
-<div class="cell-output-display">
-<p><img src="Paper_files/figure-html/unnamed-chunk-2-1.png" class="img-fluid" width="576"></p>
-</div>
-</div>
+<section id="section" class="level4">
+<h4 class="anchored" data-anchor-id="section"></h4>
 <section id="linear-model" class="level5">
 <h5 class="anchored" data-anchor-id="linear-model"><strong>Linear Model</strong></h5>
 <p>The linear model is a tried and true model used in various situations. For flow prediction, only the seasonality, or month, will be used as an exogenous factor. While climate change may introduce a trend to river flows in the very long run, a trend will not be included in this model since we are not making long-term predictions. As such, this model will predict the monthly average within the training set for each month in the test set.</p>
@@ -151,14 +204,14 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <h5 class="anchored" data-anchor-id="arima"><strong>ARIMA</strong></h5>
 <p>The ARIMA model will be determined through the Hyndman-Khandakar algorithm as specified in the <em>fable</em> package.</p>
 <div class="cell">
-<div class="sourceCode cell-code" id="cb3"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>train <span class="sc">%&gt;%</span> </span>
-<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>  <span class="fu">gg_tsdisplay</span>(</span>
-<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">#difference(flow, 12) %&gt;% difference(),</span></span>
-<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a>    flow,</span>
-<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a>    <span class="at">plot_type =</span> <span class="st">"partial"</span>, <span class="at">lag_max =</span> <span class="dv">36</span></span>
-<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a>  )</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="sourceCode cell-code" id="cb4"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>train <span class="sc">%&gt;%</span> </span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>  <span class="fu">gg_tsdisplay</span>(</span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">#difference(flow, 12) %&gt;% difference(),</span></span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a>    flow,</span>
+<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a>    <span class="at">plot_type =</span> <span class="st">"partial"</span>, <span class="at">lag_max =</span> <span class="dv">36</span></span>
+<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a>  )</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 <div class="cell-output-display">
-<p><img src="Paper_files/figure-html/unnamed-chunk-3-1.png" class="img-fluid" width="672"></p>
+<p><img src="Paper_files/figure-html/unnamed-chunk-4-1.png" class="img-fluid" width="672"></p>
 </div>
 </div>
 </section>
@@ -168,34 +221,31 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <h3 class="anchored" data-anchor-id="results">Results</h3>
 <!-- A results section that illustrates the model performance.  -->
 <p>The estimated models produced the following forecasts on the test set:</p>
-<section id="section-2" class="level4">
-<h4 class="anchored" data-anchor-id="section-2"></h4>
+<section id="section-1" class="level4">
+<h4 class="anchored" data-anchor-id="section-1"></h4>
 <div class="cell">
-<div class="sourceCode cell-code" id="cb4"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>fx <span class="sc">%&gt;%</span> </span>
-<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>  <span class="fu">autoplot</span>(</span>
-<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>    data <span class="sc">%&gt;%</span> <span class="fu">filter</span>(<span class="fu">year</span>(date)<span class="sc">&gt;</span><span class="dv">2021</span>),</span>
-<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a>    <span class="co"># level = NULL</span></span>
-<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a>  ) <span class="sc">+</span></span>
-<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a>  <span class="fu">ggtitle</span>(<span class="st">"Monthly Columbia River Flow Out-of-Sample Forecasts"</span>) <span class="sc">+</span></span>
-<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a>  <span class="fu">facet_grid</span>(.model <span class="sc">~</span> .) <span class="sc">+</span></span>
-<span id="cb4-8"><a href="#cb4-8" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_label</span>(</span>
-<span id="cb4-9"><a href="#cb4-9" aria-hidden="true" tabindex="-1"></a>    <span class="at">data =</span> fx <span class="sc">%&gt;%</span> </span>
-<span id="cb4-10"><a href="#cb4-10" aria-hidden="true" tabindex="-1"></a>      <span class="fu">accuracy</span>(</span>
-<span id="cb4-11"><a href="#cb4-11" aria-hidden="true" tabindex="-1"></a>        test, </span>
-<span id="cb4-12"><a href="#cb4-12" aria-hidden="true" tabindex="-1"></a>        <span class="at">measures =</span> <span class="fu">list</span>(point_accuracy_measures, distribution_accuracy_measures)</span>
-<span id="cb4-13"><a href="#cb4-13" aria-hidden="true" tabindex="-1"></a>      ),</span>
-<span id="cb4-14"><a href="#cb4-14" aria-hidden="true" tabindex="-1"></a>    <span class="fu">aes</span>(<span class="at">x =</span> <span class="sc">-</span><span class="cn">Inf</span>, <span class="at">y =</span> <span class="cn">Inf</span>, <span class="at">label =</span> <span class="fu">paste</span>(</span>
-<span id="cb4-15"><a href="#cb4-15" aria-hidden="true" tabindex="-1"></a>      <span class="st">" RMSE:"</span>, <span class="fu">round</span>(RMSE, <span class="dv">1</span>),</span>
-<span id="cb4-16"><a href="#cb4-16" aria-hidden="true" tabindex="-1"></a>      <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>, <span class="st">"MAPE: "</span>, <span class="fu">round</span>(MAPE, <span class="dv">1</span>),</span>
-<span id="cb4-17"><a href="#cb4-17" aria-hidden="true" tabindex="-1"></a>      <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>, <span class="st">"CRPS: "</span>, <span class="fu">round</span>(CRPS, <span class="dv">1</span>)</span>
-<span id="cb4-18"><a href="#cb4-18" aria-hidden="true" tabindex="-1"></a>    )),</span>
-<span id="cb4-19"><a href="#cb4-19" aria-hidden="true" tabindex="-1"></a>    <span class="at">hjust =</span> <span class="dv">0</span>, <span class="at">vjust =</span> <span class="dv">1</span></span>
-<span id="cb4-20"><a href="#cb4-20" aria-hidden="true" tabindex="-1"></a>  )</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
-<div class="cell-output cell-output-stderr">
-<pre><code>Using `date` as index variable.</code></pre>
-</div>
+<div class="sourceCode cell-code" id="cb5"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>fx <span class="sc">%&gt;%</span> </span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>  <span class="fu">autoplot</span>(</span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a>    data <span class="sc">%&gt;%</span> <span class="fu">filter</span>(<span class="fu">year</span>(date)<span class="sc">&gt;</span><span class="dv">2021</span>),</span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a>    <span class="co"># level = NULL</span></span>
+<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a>  ) <span class="sc">+</span></span>
+<span id="cb5-6"><a href="#cb5-6" aria-hidden="true" tabindex="-1"></a>  <span class="fu">ggtitle</span>(<span class="st">"Monthly Columbia River Flow Out-of-Sample Forecasts"</span>) <span class="sc">+</span></span>
+<span id="cb5-7"><a href="#cb5-7" aria-hidden="true" tabindex="-1"></a>  <span class="fu">facet_grid</span>(.model <span class="sc">~</span> .) <span class="sc">+</span></span>
+<span id="cb5-8"><a href="#cb5-8" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_label</span>(</span>
+<span id="cb5-9"><a href="#cb5-9" aria-hidden="true" tabindex="-1"></a>    <span class="at">data =</span> fx <span class="sc">%&gt;%</span> </span>
+<span id="cb5-10"><a href="#cb5-10" aria-hidden="true" tabindex="-1"></a>      <span class="fu">accuracy</span>(</span>
+<span id="cb5-11"><a href="#cb5-11" aria-hidden="true" tabindex="-1"></a>        test, </span>
+<span id="cb5-12"><a href="#cb5-12" aria-hidden="true" tabindex="-1"></a>        <span class="at">measures =</span> <span class="fu">list</span>(point_accuracy_measures, distribution_accuracy_measures)</span>
+<span id="cb5-13"><a href="#cb5-13" aria-hidden="true" tabindex="-1"></a>      ),</span>
+<span id="cb5-14"><a href="#cb5-14" aria-hidden="true" tabindex="-1"></a>    <span class="fu">aes</span>(<span class="at">x =</span> <span class="sc">-</span><span class="cn">Inf</span>, <span class="at">y =</span> <span class="cn">Inf</span>, <span class="at">label =</span> <span class="fu">paste</span>(</span>
+<span id="cb5-15"><a href="#cb5-15" aria-hidden="true" tabindex="-1"></a>      <span class="st">" RMSE:"</span>, <span class="fu">round</span>(RMSE, <span class="dv">1</span>),</span>
+<span id="cb5-16"><a href="#cb5-16" aria-hidden="true" tabindex="-1"></a>      <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>, <span class="st">"MAPE: "</span>, <span class="fu">round</span>(MAPE, <span class="dv">1</span>),</span>
+<span id="cb5-17"><a href="#cb5-17" aria-hidden="true" tabindex="-1"></a>      <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>, <span class="st">"CRPS: "</span>, <span class="fu">round</span>(CRPS, <span class="dv">1</span>)</span>
+<span id="cb5-18"><a href="#cb5-18" aria-hidden="true" tabindex="-1"></a>    )),</span>
+<span id="cb5-19"><a href="#cb5-19" aria-hidden="true" tabindex="-1"></a>    <span class="at">hjust =</span> <span class="dv">0</span>, <span class="at">vjust =</span> <span class="dv">1</span></span>
+<span id="cb5-20"><a href="#cb5-20" aria-hidden="true" tabindex="-1"></a>  )</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 <div class="cell-output-display">
-<p><img src="Paper_files/figure-html/unnamed-chunk-4-1.png" class="img-fluid" width="768"></p>
+<p><img src="Paper_files/figure-html/unnamed-chunk-5-1.png" class="img-fluid" width="768"></p>
 </div>
 </div>
 <section id="arima-statistics" class="level6">
@@ -246,8 +296,8 @@ Model: ETS(M,N,M)
 </div>
 </section>
 </section>
-<section id="section-3" class="level4">
-<h4 class="anchored" data-anchor-id="section-3"></h4>
+<section id="section-2" class="level4">
+<h4 class="anchored" data-anchor-id="section-2"></h4>
 </section>
 </section>
 <section id="discussion" class="level3">
@@ -260,9 +310,41 @@ Model: ETS(M,N,M)
 <section id="conclusion" class="level3">
 <h3 class="anchored" data-anchor-id="conclusion">Conclusion</h3>
 <p>Medium and long term predictions of river flows are very difficult without exogenous factors. The higher correlation with more recent periods could imply that short-term forecasts are more achievable. A good approach for the long term is to simply use the historical average, an ARIMA model may prove useful for the shorter term forecasts. Further study using cross validation should be done to determine if a modified ensemble method could be beneficial where the ARIMA model is given a higher weight for the first couple of months and the linear model thereafter.</p>
+
 </section>
 
-</main>
+<div id="quarto-appendix" class="default"><section class="quarto-appendix-contents" role="doc-bibliography"><h2 class="anchored quarto-appendix-heading">References</h2><div id="refs" class="references csl-bib-body hanging-indent" role="list">
+<div id="ref-ghadimi_2022" class="csl-entry" role="listitem">
+Danandeh Mehr, Ali, Sahand Ghadimi, Hannu Marttila, and Ali Torabi Haghighi. 2022. <span>“A New Evolutionary Time Series Model for Streamflow Forecasting in Boreal Lake-River Systems.”</span> <em>Theoretical and Applied Climatology</em> 148 (1): 255–68. <a href="https://doi.org/10.1007/s00704-022-03939-3">https://doi.org/10.1007/s00704-022-03939-3</a>.
+</div>
+<div id="ref-garen_1992" class="csl-entry" role="listitem">
+Garen, David C. 1992. <span>“Improved Techniques in Regression‐based Streamflow Volume Forecasting.”</span> <em>Journal of Water Resources Planning and Management</em> 118 (6): 654–70. <a href="https://doi.org/10.1061/(ASCE)0733-9496(1992)118:6(654)">https://doi.org/10.1061/(ASCE)0733-9496(1992)118:6(654)</a>.
+</div>
+<div id="ref-R-fpp3" class="csl-entry" role="listitem">
+Hyndman, Rob. 2023. <em>Fpp3: Data for "Forecasting: Principles and Practice" (3rd Edition)</em>. <a href="https://CRAN.R-project.org/package=fpp3">https://CRAN.R-project.org/package=fpp3</a>.
+</div>
+<div id="ref-ilhan_2022" class="csl-entry" role="listitem">
+Ilhan, Akin. 2022. <span>“Forecasting of River Water Flow Rate with Machine Learning.”</span> <em>Neural Computing and Applications</em> 34 (22). <a href="https://doi.org/10.1007/s00521-022-07576-9">https://doi.org/10.1007/s00521-022-07576-9</a>.
+</div>
+<div id="ref-R-base" class="csl-entry" role="listitem">
+R Core Team. 2019. <em>R: A Language and Environment for Statistical Computing</em>. Vienna, Austria: R Foundation for Statistical Computing. <a href="https://www.R-project.org">https://www.R-project.org</a>.
+</div>
+<div id="ref-NWS" class="csl-entry" role="listitem">
+Service, National Weather. 2023. <span>“Northwest River Forecast Center.”</span> <a href="https://www.nwrfc.noaa.gov/rfc/">https://www.nwrfc.noaa.gov/rfc/</a>.
+</div>
+<div id="ref-ggplot22016" class="csl-entry" role="listitem">
+Wickham, Hadley. 2016. <em>Ggplot2: Elegant Graphics for Data Analysis</em>. Springer-Verlag New York. <a href="https://ggplot2.tidyverse.org">https://ggplot2.tidyverse.org</a>.
+</div>
+<div id="ref-R-tidyverse" class="csl-entry" role="listitem">
+———. 2023. <em>Tidyverse: Easily Install and Load the Tidyverse</em>. <a href="https://CRAN.R-project.org/package=tidyverse">https://CRAN.R-project.org/package=tidyverse</a>.
+</div>
+<div id="ref-tidyverse2019" class="csl-entry" role="listitem">
+Wickham, Hadley, Mara Averick, Jennifer Bryan, Winston Chang, Lucy D’Agostino McGowan, Romain François, Garrett Grolemund, et al. 2019. <span>“Welcome to the <span class="nocase">tidyverse</span>.”</span> <em>Journal of Open Source Software</em> 4 (43): 1686. <a href="https://doi.org/10.21105/joss.01686">https://doi.org/10.21105/joss.01686</a>.
+</div>
+<div id="ref-R-ggplot2" class="csl-entry" role="listitem">
+Wickham, Hadley, Winston Chang, Lionel Henry, Thomas Lin Pedersen, Kohske Takahashi, Claus Wilke, Kara Woo, Hiroaki Yutani, and Dewey Dunnington. 2023. <em>Ggplot2: Create Elegant Data Visualisations Using the Grammar of Graphics</em>. <a href="https://CRAN.R-project.org/package=ggplot2">https://CRAN.R-project.org/package=ggplot2</a>.
+</div>
+</div></section></div></main>
 <!-- /main column -->
 <script id="quarto-html-after-body" type="application/javascript">
 window.document.addEventListener("DOMContentLoaded", function (event) {
