@@ -1,7 +1,14 @@
 ---
-title: "Columbia River KCFS Flows"
-author: Shaun Harrington
+title: "Columbia River Flow Prediction"
+author: "Shaun Harrington"
+institute: "Boston College"
+date: "July 21, 2023"
 format: html
+bibliography: ["references.bib", "packages.bib"]
+nocite: '@*'
+biblio-style: "apalike"
+editor_options: 
+  chunk_output_type: console
 ---
 
 ```{r setup, include=FALSE}
@@ -15,6 +22,7 @@ knitr::opts_chunk$set(
 
 library(tidyverse)
   library(fpp3)
+library(scales)
   
   data <- read_csv("Columbia River Flows.csv") %>% 
     mutate(
@@ -42,6 +50,7 @@ library(tidyverse)
   
 ```
 
+$$\\[1in]$$
 
 ### Abstract {data-height=100}
 
@@ -51,17 +60,20 @@ The Columbia River provides electrical generation for 14 dams in the Pacific Nor
 
 \newpage
 
-### Introduction & Significance
+### Introduction
 
 <!-- An introduction section with a discussion of three to five references associated with the topic (e.g., energy forecasting if that is what you are doing) and the selected methods (e.g., ETS, ARIMA, Regression, Ensemble). -->
 
-The Columbia River begins in British Columbia, Canada running through Washington state to the Oregon border where it empties into the Pacific Ocean. There are 14 hydroelectric dams along this river, 11 of which are in the US and 3 in Canada. The amount of water that flows through largely determines how much electricity these plants generate, much of which is sold to California. While rains can affect the amount of water in the river, the winter snow pack and heat progression throughout Spring and Summer largely determine how much water will flow in the river. 
+The Columbia River begins in British Columbia, Canada running through Washington state and then along the Oregon border where it empties into the Pacific Ocean. Fourteen hydroelectric dams-11 American and 3 Canadian- are found along it. Their ability to generate power relies heavily on the river's water volume, much of which is sold to California. 
 
-An understanding of these flows are important because they determine when turbines should be brought offline for upgrades or repairs, and for calculating if power must be purchased from the wholesale market. To predict these flows, three models will be estimated: ETS, ARIMA, and linear model. A fourth ensemble model will be the average of these. 
+While rains can affect the amount of water in the river, the winter snow pack and heat progression throughout Spring and Summer largely determine how much water will flow in the river. The electric utilities that operate these hydroelectric plants must have an understanding of this river to maximize their operations. Short-term river forecasts are essential for daily operations. Hydroelectric plants must maintain their forebay—the body of water just before the dam— within a certain range mandated by the Federal Energy Regulatory Commission. To achieve this, they can manipulate two dials: the flow of water through their turbines and the use of spill gates.
 
-####
+Generally, water is sent through spill gates only when turbines are operating at their full capacity. In the early summer, when river flow is often at its peak, these dams are unable to fully utilize the excess water for power generation. This necessitates the opening of spill gates. Many of these are manually operated, highlighting the need for reliable river flow forecasts to ensure adequate personnel are on hand to manage the operation. Beyond just meeting regulatory guidelines, operators also aim to maintain the highest forebay level possible, as this allows the system to generate electricity more efficiently.
 
-```{r fig.height=3, fig.width=4.75}
+Long-term, these forecasts are necessary in scheduling maintenance of the turbines. During low flow periods of the year, plants have ample capacity to handle the water volume. This allows turbines to be shut down for routine maintenance without forsaking any significant amount of potential revenue. 
+
+
+```{r fig.height=4}
 
 train %>% 
     autoplot(flow) +
@@ -71,19 +83,46 @@ train %>%
 
 
 
+Between 2010 and 2022, the Columbia river has averaged `r mean(train$flow) %>% round(., 1)` kcfs. The minimum in this period was `r min(train$flow) %>% round(., 1)` kcfs with a maximum of `r max(train$flow) %>% round(., 1)` kcfs.
+
+
+```{r fig.height=3}
+
+train %>%
+  ggplot(aes(x = flow)) + 
+  geom_histogram(binwidth = 25) +
+  ggtitle("Columbia River Average Monthly Flow Distribution") +
+  xlab("KCFS")
+
+```
+
+The seasonality plot below demonstrates how these flows change throughout a year. A complicating matter is the prediction of peak flows. The winter's snowpack determines how much water will flow through the water, but the speed at which Spring warms determines when the flow begins to pick up. 
+
+```{r fig.height=4}
+train %>% 
+  gg_season(flow) +
+  ggtitle("Seasonality Plot: Columbia River Flow (kcfs)") +
+  xlab("Month") +
+  scale_y_continuous("kcfs", breaks = seq(0, 400, 50)) +
+  theme(legend.position = c(.9, .7))
+```
+
+Because of the consequential nature of river flows, the literature abounds in various methods. The National Oceanic and Atmospheric Administration (NOAA) holds the Northwest River Forecast Center (@NWS) that provides the public with 10-day and 120-day river flow forecasts. 
+
+@garen_1992 has found an improvement with linear models by implementing three methods: employing principal components regression, using cross validation, and systematic searching for optimal combinations of variables. 
+
+@ghadimi_2022 compares river forecast accuracy using genetic programming (GP), seasonal autoregressive integrated moving average (SARIMA), and an ensemble dubbed GP-SARIMA. The GP and SARIMA were found to both execute well on a day-ahead forecast, though struggled in the longer-term. The GP-SARIMA model was able to reduce the forecast RMSE by 1/4 in the longer-term. 
+
+@ilhan_2022 compares 102 machine learning models on day-ahead forecasts. While the models produced a spectrum of results, they were able to decrease the MAE and RMSE by considering an ensemble approach that averages their top performing models.
+
+The approach in this analysis uses classical time series models for predicting one year of monthly river flows. A linear model, ETS, ARIMA, and an ensemble model will be estimated and evaluated on an out-of-sample test set.
+
 ### Methods
 
 <!-- A methods section discussing the chosen methods and formulation.  -->
 
 #### 
 
-```{r fig.height=4, fig.width=6}
-train %>% 
-  gg_season(flow) +
-  ggtitle("Seasonality Plot: Columbia River Flow (kcfs)") +
-  xlab("Month") +
-  theme(legend.position = c(.9, .7))
-```
 
 
 ##### **Linear Model**
