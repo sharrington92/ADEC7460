@@ -181,11 +181,11 @@ div.csl-indent {
 <p><img src="Paper_files/figure-html/unnamed-chunk-3-1.png" class="img-fluid" width="768"></p>
 </div>
 </div>
-<p>Because of the consequential nature of river flows, the literature abounds in various methods. The National Oceanic and Atmospheric Administration (NOAA) holds the Northwest River Forecast Center <span class="citation" data-cites="NWS">(<a href="#ref-NWS" role="doc-biblioref">Service 2023</a>)</span> that provides the public with 10-day and 120-day river flow forecasts.</p>
+<p>Because of the consequential nature of river flows, the literature abounds in various methods. The National Oceanic and Atmospheric Administration (NOAA) holds the Northwest River Forecast Center <span class="citation" data-cites="NWS">(<a href="#ref-NWS" role="doc-biblioref">NOAA 2023</a>)</span> that provides the public with 10-day and 120-day river flow forecasts.</p>
 <p><span class="citation" data-cites="garen_1992">Garen (<a href="#ref-garen_1992" role="doc-biblioref">1992</a>)</span> has found an improvement with linear models by implementing three methods: employing principal components regression, using cross validation, and systematic searching for optimal combinations of variables.</p>
 <p><span class="citation" data-cites="ghadimi_2022">Danandeh Mehr et al. (<a href="#ref-ghadimi_2022" role="doc-biblioref">2022</a>)</span> compares river forecast accuracy using genetic programming (GP), seasonal autoregressive integrated moving average (SARIMA), and an ensemble dubbed GP-SARIMA. The GP and SARIMA were found to both execute well on a day-ahead forecast, though struggled in the longer-term. The GP-SARIMA model was able to reduce the forecast RMSE by 1/4 in the longer-term.</p>
 <p><span class="citation" data-cites="ilhan_2022">Ilhan (<a href="#ref-ilhan_2022" role="doc-biblioref">2022</a>)</span> compares 102 machine learning models on day-ahead forecasts. While the models produced a spectrum of results, they were able to decrease the MAE and RMSE by considering an ensemble approach that averages their top performing models.</p>
-<p>The approach in this analysis uses classical time series models for predicting one year of monthly river flows. A linear model, ETS, ARIMA, and an ensemble model will be estimated and evaluated on an out-of-sample test set.</p>
+<p>The approach in this analysis uses classical time series models for predicting one year of monthly river flows. A linear model, ETS, ARIMA, and an ensemble model will be estimated and evaluated on an out-of-sample test set. The river flow data used is provided through the <span class="citation" data-cites="nwis_api">United States Geological Survey (<a href="#ref-nwis_api" role="doc-biblioref">2023</a>)</span> API and aggregated to monthly averages.</p>
 </section>
 <section id="methods" class="level3">
 <h3 class="anchored" data-anchor-id="methods">Methods</h3>
@@ -211,7 +211,7 @@ div.csl-indent {
 <span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a>    <span class="at">plot_type =</span> <span class="st">"partial"</span>, <span class="at">lag_max =</span> <span class="dv">36</span></span>
 <span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a>  )</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 <div class="cell-output-display">
-<p><img src="Paper_files/figure-html/unnamed-chunk-4-1.png" class="img-fluid" width="672"></p>
+<p><img src="Paper_files/figure-html/unnamed-chunk-4-1.png" class="img-fluid" width="768"></p>
 </div>
 </div>
 </section>
@@ -326,11 +326,14 @@ Hyndman, Rob. 2023. <em>Fpp3: Data for "Forecasting: Principles and Practice" (3
 <div id="ref-ilhan_2022" class="csl-entry" role="listitem">
 Ilhan, Akin. 2022. <span>“Forecasting of River Water Flow Rate with Machine Learning.”</span> <em>Neural Computing and Applications</em> 34 (22). <a href="https://doi.org/10.1007/s00521-022-07576-9">https://doi.org/10.1007/s00521-022-07576-9</a>.
 </div>
+<div id="ref-NWS" class="csl-entry" role="listitem">
+NOAA. 2023. <span>“Northwest River Forecast Center.”</span> <a href="https://www.nwrfc.noaa.gov/rfc/">https://www.nwrfc.noaa.gov/rfc/</a>.
+</div>
 <div id="ref-R-base" class="csl-entry" role="listitem">
 R Core Team. 2019. <em>R: A Language and Environment for Statistical Computing</em>. Vienna, Austria: R Foundation for Statistical Computing. <a href="https://www.R-project.org">https://www.R-project.org</a>.
 </div>
-<div id="ref-NWS" class="csl-entry" role="listitem">
-Service, National Weather. 2023. <span>“Northwest River Forecast Center.”</span> <a href="https://www.nwrfc.noaa.gov/rfc/">https://www.nwrfc.noaa.gov/rfc/</a>.
+<div id="ref-nwis_api" class="csl-entry" role="listitem">
+United States Geological Survey. 2023. <span>“National Water Information System API.”</span> <a href="https://nwis.waterservices.usgs.gov/nwis/iv/?format=rdb&amp;sites=12472800&amp;startDT=2010-01-01&amp;endDT=2023-07-02&amp;parameterCd=00060,00065&amp;siteStatus=all" class="uri">https://nwis.waterservices.usgs.gov/nwis/iv/?format=rdb&amp;sites=12472800&amp;startDT=2010-01-01&amp;endDT=2023-07-02&amp;parameterCd=00060,00065&amp;siteStatus=all</a>.
 </div>
 <div id="ref-ggplot22016" class="csl-entry" role="listitem">
 Wickham, Hadley. 2016. <em>Ggplot2: Elegant Graphics for Data Analysis</em>. Springer-Verlag New York. <a href="https://ggplot2.tidyverse.org">https://ggplot2.tidyverse.org</a>.

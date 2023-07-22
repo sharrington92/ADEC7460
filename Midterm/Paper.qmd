@@ -3,7 +3,7 @@ title: "Columbia River Flow Prediction"
 author: "Shaun Harrington"
 institute: "Boston College"
 date: "July 21, 2023"
-format: html
+format: pdf
 bibliography: ["references.bib", "packages.bib"]
 nocite: '@*'
 biblio-style: "apalike"
@@ -23,6 +23,8 @@ knitr::opts_chunk$set(
 library(tidyverse)
   library(fpp3)
 library(scales)
+
+if(basename(getwd())!="Midterm") setwd(file.path(getwd(), "Midterm"))
   
   data <- read_csv("Columbia River Flows.csv") %>% 
     mutate(
@@ -56,7 +58,8 @@ $$\\[1in]$$
 
 <!-- The poster will include an abstract summarizing the problem, the significance of the problem, the methods, and the results in about 200 words. -->
 
-The Columbia River provides electrical generation for 14 dams in the Pacific Northwest. The years vary by a large margin and recent months are loosely correlated with the present, providing a difficult situation for medium and long term forecasting. This analysis compares the out-of-sample prediction by means of OLS, ARIMA, ETS, and ensemble models. It is found that ARIMA can be useful for shorter-term forecasts but an OLS model that evaluates the historical seasonal mean is a more reliable method.
+
+River flow forecasts are crucial for efficient hydroelectric operations and maintenance scheduling, particularly in the context of the Columbia River, which is heavily utilized for power generation. This study examined the efficacy of various forecasting methods, including a linear model, Exponential Smoothing model (ETS), Autoregressive Integrated Moving Average model (ARIMA), and an ensemble model in predicting monthly river flows over a year. Using historical river flow data, each model was evaluated based on Root Mean Squared Error (RMSE), Mean Absolute Percentage Error (MAPE), and Continuous Ranked Probability Score (CRPS). Surprisingly, the simpler linear model, incorporating a seasonal component and 1-month lag, outperformed the more complex ETS and ARIMA models on all metrics. However, the robustness of these results to long-term changes in climate and weather patterns warrants further investigation. The study concludes by advocating for a tailored approach to forecasting, which takes into account the specific characteristics of river flows and possibly includes other predictive factors, such as climate and weather data.
 
 \newpage
 
@@ -115,29 +118,13 @@ Because of the consequential nature of river flows, the literature abounds in va
 
 @ilhan_2022 compares 102 machine learning models on day-ahead forecasts. While the models produced a spectrum of results, they were able to decrease the MAE and RMSE by considering an ensemble approach that averages their top performing models.
 
-The approach in this analysis uses classical time series models for predicting one year of monthly river flows. A linear model, ETS, ARIMA, and an ensemble model will be estimated and evaluated on an out-of-sample test set.
+The approach in this analysis uses classical time series models for predicting one year of monthly river flows. A linear model, ETS, ARIMA, and an ensemble model will be estimated and evaluated on an out-of-sample test set. The river flow data used is provided through the @nwis_api API and aggregated to monthly averages.
 
 ### Methods
 
 <!-- A methods section discussing the chosen methods and formulation.  -->
 
-#### 
-
-
-
-##### **Linear Model**
-
-The linear model is a tried and true model used in various situations. For flow prediction, only the seasonality, or month, will be used as an exogenous factor. While climate change may introduce a trend to river flows in the very long run, a trend will not be included in this model since we are not making long-term predictions. As such, this model will predict the monthly average within the training set for each month in the test set.
-
-##### **ETS**
-
-The ETS model will be estimated for the level and seasonality. Once again, and for similar reasons, a trend will not be included. 
-
-##### **ARIMA**
-
-The ARIMA model will be determined through the Hyndman-Khandakar algorithm as specified in the *fable* package. 
-
-```{r fig.height=4, fig.width=7}
+```{r fig.height=4}
 train %>% 
   gg_tsdisplay(
     #difference(flow, 12) %>% difference(),
@@ -147,14 +134,98 @@ train %>%
 ```
 
 
+##### **Linear Model**
+
+The linear model is a tried and true model used in various situations. For flow prediction, the seasonality, or month, will be used as an exogenous variable due to the highly seasonal nature of river flows. While climate change may introduce a trend to river flows in the very long run, a trend will not be included  since we are not making long-term predictions. As such, a model with only a seasonal component will predict the monthly average within the training set for each month in the test set. However, a model with only a seasonal component displays strong autocorrelation within the residuals, suggesting some predictive power is being unused. A 1-month lag will also be included in this model. 
+
+
+```{r fig.height = 4}
+
+fit.lm <- train %>% 
+  model(TSLM(flow ~ season() + lag(flow, 1)))
+
+fit.lm %>% 
+  gg_tsresiduals()
+
+```
+
+
+
+##### **ETS**
+
+The ETS model will be estimated for the level and seasonality. Once again, and for the same reasons, a trend will not be included. ETS models do not incorporate exogenous regressors. 
+
+
+```{r fig.height = 4}
+
+fit.ets <- train %>% 
+  model(ETS(flow ~ error() + trend("N") + season()))
+
+fit.ets %>% 
+  gg_tsresiduals()
+
+```
+
+Though the residuals appear to be mostly white noise, the ACF displays autocorrelation at the 1-month and 12-month lags. This is confirmed with the Ljung-Box test.
+
+
+```{r}
+
+fit.ets %>% 
+  augment() %>% 
+  features(.innov, ljung_box, lag = 12)
+
+```
+
+
+##### **ARIMA**
+
+The ARIMA model will be determined through the Hyndman-Khandakar algorithm as specified in the *fable* package. 
+
+
+```{r fig.height = 4}
+
+fit.arima <- train %>% 
+  model(ARIMA((flow)))
+
+fit.arima %>% 
+  gg_tsresiduals()
+
+```
+
+A visual inspection suggests the residuals are uncorrelated and random, which is also supported by the Ljung-Box test.
+
+
+```{r}
+
+fit.arima %>% 
+  augment() %>% 
+  features(.innov, ljung_box, lag = 12)
+
+```
+
+#### Ensemble
+
+The ensemble is a simple average of the prior three models. No egregious problems can be visually inspected in the residuals, though the ACF plot could indicate some autocorrelation is still present.
+
+```{r fig.height = 4}
+
+fit %>%
+  select(ensemble) %>% 
+  gg_tsresiduals()
+
+
+```
+
+
+
 ### Results
 
 <!-- A results section that illustrates the model performance.  -->
 The estimated models produced the following forecasts on the test set:
 
-####
 
-```{r fig.height=4.5, fig.width=8}
+```{r fig.height=7}
 fx %>% 
   autoplot(
     data %>% filter(year(date)>2021),
@@ -174,13 +245,20 @@ fx %>%
       "\n", "CRPS: ", round(CRPS, 1)
     )),
     hjust = 0, vjust = 1
+  ) +
+  theme(
+    legend.position = "bottom"
   )
 
 ```
 
+The linear model outperforms the other models on all metrics (RMSE, MAPE, and CRPS). 
+
+The worst model on the point estimate forecast is the ETS model with a *root mean squared error* (RMSE) of 53 kcfs. While it scores higher than the ARIMA on the *continuous ranked probability score* (CRPS), the confidence interval is much greater than that of the other models. However, the linear model and ARIMA have one and two predictions, respectively, that fall outside of their 95% confidence interval. This suggests the models are not properly specified and some improvements could be made by adjusting the models.
+
+
+
 ###### ARIMA Statistics:
-
-
 
 
 ```{r}
@@ -200,14 +278,12 @@ fit %>%
 ```
 
 
-####
-
 
 ### Discussion 
 
 <!-- A discussion section that indicates the utility of the models.  -->
 
-The LM does minimize the RMSE, MAPE, and CRPS. A complicating factor is that while strong seasonality does exist, the amount of water in a given year varies by a good margin as do the springs. A cold spring that suddenly turns hot will cause snow to melt faster causing large peaks. In contrast, a warm spring will cause the snow to begin melting earlier, but not necessarily at a fast rate. The linear model predicts each month to be the historical average, producing a decent forecast. 
+The LM does minimize the RMSE, MAPE, and CRPS. A complicating factor is that while strong seasonality does exist, the amount of water in a given year varies by a good margin as do the springs. A cold spring that suddenly turns hot will cause snow to melt faster causing large peaks. In contrast, a warm spring will cause the snow to begin melting earlier, but not necessarily at a fast rate. The linear model predicts each month to be the historical average with an adjustment considering the prior month, producing a decent forecast. 
 
 The ETS and ARIMA models both overestimate the actual flow, likely a result of the high water year for the last period of the training set. The positive ma1 term and negative ma2 term indicate that when there is this large change in the flow, the following month is usually the same direction, but the month after that results in a larger contraction in the opposite direction. This lines up with the warm/cold spring theory postulated in the previous paragraph.
 
@@ -216,4 +292,20 @@ A gamma value near zero in the ETS model indicates that river flows do not respo
 
 ### Conclusion
 
-Medium and long term predictions of river flows are very difficult without exogenous factors. The higher correlation with more recent periods could imply that short-term forecasts are more achievable. A good approach for the long term is to simply use the historical average, an ARIMA model may prove useful for the shorter term forecasts. Further study using cross validation should be done to determine if a modified ensemble method could be beneficial where the ARIMA model is given a higher weight for the first couple of months and the linear model thereafter. 
+
+This research has analyzed the efficacy of different forecasting models in predicting the flows of the Columbia River. Efficient operations of the hydroelectric dams requires reliable estimates of future river flows. This paper compares the predictive power of the linear model, ETS, ARIMA, and an ensemble approach to forecast 12 months of river flows.
+
+The linear model with a seasonality component and 1-month lag outperformed the more sophisticated ETS and ARIMA models on all metrics. This performance is likely due to the difficult nature of predicting river flows. While the linear model performed best on this sample, abnormal years will result in a worse performance. Further study should consider a longer time span and use cross validation to adequately compare the different methods.
+
+Though the ETS and ARIMA overestimated river flows, each offer valuable insights into the nature of the river. The ma terms from the ARIMA model indicate how flows might react to sudden changes in temperature, which could help mitigate the damage from extreme weather events. The ETS model's parameters indicate that the river is not overly responsive to recent periods, suggesting a near random walk nature of the time series.
+
+This comparison demonstrates the benefits of using multiple models for predictive analysis and also show the need for careful inspection of the story that each tells.  Exogenous regressors should be included in future studies. An estimate of snow pack, total precipitation, and temperature or heating degree days may be beneficial. As snow pack is a stock measure, accumulated heating degree days could prove useful to measure the amount of spring run off. Rainfall could aid short-term forecasts to see the impact it has to flows.
+
+
+
+\newpage
+
+### References
+
+::: {#refs}
+:::
