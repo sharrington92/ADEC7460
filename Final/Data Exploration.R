@@ -18,19 +18,33 @@
     mutate(week_start_date = yearweek(week_start_date)) %>% 
     tsibble(key = city, index = week_start_date)
   
-  train <- read_csv(file.path("Final", "Data", "dengue_labels_train.csv")) %>% 
+  train.all <- read_csv(file.path("Final", "Data", "dengue_labels_train.csv")) %>% 
     inner_join(
       y = read_csv(file.path("Final", "Data", "dengue_features_train.csv")),
       by = c("city", "year", "weekofyear")
     ) %>% 
-    mutate(yearweak = yearweek(week_start_date)) %>% 
-    tsibble(key = city, index = yearweak) %>% 
+    mutate(yearweek = yearweek(week_start_date)) %>% 
+    tsibble(key = city, index = yearweek) %>% 
     fill_gaps() %>% 
     mutate()
   
-  train %>% 
-    fill_gaps() %>% 
-    anti_join(y = train) %>% View()
+  valid <- train.all %>% 
+    group_by(city) %>% 
+    slice_max(order_by = yearweek, prop = .2) %>% 
+    ungroup()
+  train <- train.all %>% 
+    anti_join(y = valid, by = c("city", "yearweek"))
+  
+  
+  valid %>% 
+    as_tibble() %>% 
+    group_by(city) %>% 
+    summarize(
+      max = max(yearweek),
+      min = min(yearweek),
+      n = n()
+    )
+  
 }
 
 # Cases
@@ -41,7 +55,7 @@
   
   # Seasonality
   train %>% 
-    gg_season(log(total_cases))
+    gg_season(box_cox(total_cases,0))
   
   # Autocorrelation
   train %>% 
@@ -101,4 +115,51 @@
     ggplot(aes(x = value, y = total_cases, color = name)) +
     geom_point() +
     facet_wrap(name ~ ., scales = "free")
+}
+
+# Linear Model
+{
+  colnames(train)
+  
+  fit <- train %>% 
+    model(
+      TSLM(
+        box_cox(total_cases, 1) ~ season() + lag(total_cases) + difference(lag(total_cases))
+          + lag(total_cases^2) + fourier
+        # difference(total_cases) ~ season()
+      )
+    ); report(fit %>% filter(city == "iq")); report(fit %>% filter(city == "sj"))
+  fx <- fit %>% 
+    forecast(valid)
+  fx %>% 
+    autoplot(valid); accuracy(fx, valid)
+  
+  fit %>% filter(city == "sj") %>% gg_tsresiduals()
+  fit %>% filter(city == "iq") %>% gg_tsresiduals()
+  
+  {
+    augment(fit) %>% select(city, yearweek, .resid) %>% 
+      full_join(train, by = c("city", "yearweek")) %>% 
+      filter(city == "iq") %>% 
+      mutate(
+        # total_cases = difference(total_cases),
+        across(
+          -c(city, year, weekofyear, week_start_date, yearweek, total_cases, .resid),
+          # difference
+          # log
+          # lag
+          # \(x){log(x) %>% difference()}
+          \(x){lag(x, 1) %>% difference()}
+        )
+      ) %>%
+      as_tibble() %>% 
+      select(-c(city, year, weekofyear, week_start_date, yearweek)) %>% #filter(!is.na(total_cases)) %>% cor(use = 'complete.obs')
+      pivot_longer(-.resid) %>% 
+      ggplot(aes(x = value, y = .resid, color = name)) +
+      geom_point() +
+      facet_wrap(name ~ ., scales = "free") +
+      theme(
+        legend.position = "none"
+      )
+    }
 }
