@@ -1,0 +1,193 @@
+---
+title: "Week 4 Discussion"
+author: "Shaun Harrington"
+format: html
+editor_options: 
+  chunk_output_type: console
+---
+
+## Setup
+
+```{r}
+#| warning: false
+
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE
+)
+
+library(tidyverse)
+library(fpp3)
+library(readxl)
+
+theme_set(theme_bw())
+
+if(basename(getwd()) != "Week 4") setwd(file.path(getwd(), "Discussions", "Week 4"))
+
+library(jsonlite)
+
+# EIA_API_KEY is environmental variable. 
+#   Must register for an API key here: https://www.eia.gov/opendata/register.php
+eia.key <- EIA_API_KEY
+  
+  
+fn_query_eia <- function(
+  the_series_id, the_source = "steo", the_frequency = "monthly", 
+  the_offset = 0, the_length = 5000, the_eia_key = eia.key){
+  
+  the_url = "https://api.eia.gov/v2/"
+  
+  # Query must be no more than 5,000
+  if(the_length > 5000) break
+  
+  get_call <- paste0(the_url, the_source, "/data/?", paste(
+    paste0("frequency=", the_frequency), 
+    "data[0]=value", 
+    paste0("facets[seriesId][]=", the_series_id), 
+    "sort[0][column]=period", 
+    "sort[0][direction]=desc", 
+    paste0("offset=", the_offset), 
+    paste0("length=", the_length),
+    sep = "&"
+  ))
+  
+  eia_list <- fromJSON(str_c(get_call, "&api_key=", the_eia_key))
+  
+  eia_data <- eia_list$response$data
+  
+  eia_data %>% 
+    as_tibble() %>% 
+    return()
+}
+
+```
+
+## Preliminary Analysis
+
+
+### Data Preparation
+
+
+
+```{r}
+
+# https://data.world/us-doe-gov/f047b651-160c-447b-8c96-1da78719f914/workspace/file?filename=energy-consumption-1.xls
+data <- read_xlsx("energy-consumption-1.xlsx", skip = 9) %>% 
+    filter(!is.na(Month)) %>% 
+    mutate(across(-Month, as.numeric)) %>% 
+    mutate(Month = tsibble::yearmonth(ymd(Month))) %>% 
+    tsibble() %>% 
+    select(1:3) %>% 
+    rename_with(~c("month", "residential.primary", "residential.total"))
+
+
+```
+
+
+```{r}
+
+test <- data %>% 
+  slice_max(order_by = date, n = 24) %>% 
+  tsibble(index = month)
+train <- data %>% 
+  anti_join(y = test, by = "date") %>% 
+  tsibble(index = date)
+
+```
+
+
+
+### Data Exploration
+
+#### Time Plots 
+
+```{r}
+#| fig-height: 4
+
+train %>% 
+  autoplot(cases) +
+  ggtitle("Monthly Chickenpox Cases in Hungary")
+
+```
+
+#### Seasonality Plots
+
+
+```{r}
+#| fig-height: 4
+
+train %>% 
+  gg_season(cases) +
+  ggtitle("Seasonality Plot: Monthly Chickenpox Cases in Hungary")
+
+```
+
+
+
+#### Autocorrelation
+
+
+
+```{r}
+
+train %>% 
+  gg_tsdisplay(difference(log(cases), 12) %>% difference(), plot_type = "partial", lag_max = 36)
+
+```
+
+
+## Modeling
+
+#### Estimation
+
+
+```{r}
+
+
+(fit <- train %>% 
+  model(
+    "ets" = ETS(log(cases) ~ error("A") + trend("A") + season("A")),
+    "arima" = ARIMA(log(cases))
+  ))
+
+
+```
+
+
+
+```{r}
+glance(fit)
+```
+
+
+### Forecast
+
+The models were trained on data prior to `r max(as.Date(train$date)) + months(1)`. The forecast period is the interval `r lubridate::interval(min(as.Date(test$date)), max(as.Date(test$date)))`. 
+
+
+```{r}
+
+  fx <- fit %>% 
+        forecast(test)
+  
+
+  fx %>% 
+    autoplot(
+        data %>% filter(year(date)>2013),
+        level = NULL
+      ) +
+        ggtitle("Monthly Chickenpox Case Out-of-Sample Forecast")
+
+```
+
+#### Metrics
+
+
+```{r}
+
+fx %>% 
+  accuracy(test)
+
+```
+
