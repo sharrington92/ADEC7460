@@ -18,7 +18,7 @@
     mutate(week_start_date = yearweek(week_start_date)) %>% 
     tsibble(key = city, index = week_start_date)
   
-  train.all <- read_csv(file.path("Final", "Data", "dengue_labels_train.csv")) %>% 
+  train.all.raw <- read_csv(file.path("Final", "Data", "dengue_labels_train.csv")) %>% 
     inner_join(
       y = read_csv(file.path("Final", "Data", "dengue_features_train.csv")),
       by = c("city", "year", "weekofyear")
@@ -26,7 +26,52 @@
     mutate(yearweek = yearweek(week_start_date)) %>% 
     tsibble(key = city, index = yearweek) %>% 
     fill_gaps() %>% 
-    mutate()
+    relocate(yearweek, everything())
+  
+  vars.id <- c("yearweek", "year", "city", "weekofyear", "week_start_date")
+  vars.fact <- setdiff(colnames(train.all.raw), vars.id)
+  
+  
+  # Missing Values
+  {
+    train.all.raw %>% 
+      select(total_cases) %>% 
+      filter(is.na(total_cases))
+    
+    train.all <- train.all.raw %>% 
+      mutate(
+        is_missing = coalesce(total_cases*0, 1) %>% factor,
+        year = year(yearweek),
+        week_start_date = as.Date(yearweek),
+        weekofyear= week(week_start_date)
+      ) %>% 
+      mutate(
+        across(all_of(vars.fact), na.approx)
+      )
+      # filter(yearweek == yearweek("2000 W52")) %>% 
+      # View()
+    
+    train.all2 %>% 
+      # filter(year %in% c(2006:2006)) %>% 
+      filter(week_start_date >= ymd("2006-09-01")) %>% 
+      filter(week_start_date <= ymd("2007-03-01")) %>% 
+      filter(city != "iq") %>% 
+      # mutate(total_cases_approx = na.approx(total_cases)) %>% 
+      ggplot(aes(
+        x = yearweek, 
+        y = coalesce(total_cases, -1),
+        # y = total_cases_approx,
+        # color = is_missing,
+        shape = is_missing, group = city
+      )) +
+      geom_line() +
+      geom_point(aes(color = is_missing), size = 3)
+    
+    
+    # Will linearly approx missing values for now. 
+    #   Need to check residuals to see if those points are outliers
+  }
+  
   
   valid <- train.all %>% 
     group_by(city) %>% 
@@ -44,78 +89,91 @@
       min = min(yearweek),
       n = n()
     )
-  
 }
 
-# Cases
+
+# Visualizations
 {
-  # Time plot
+  # Cases
+  {
+    # Time plot
+    train %>% 
+      autoplot(log(total_cases))
+    
+    # Seasonality
+    train %>% 
+      gg_season(box_cox(total_cases,0))
+    
+    # Autocorrelation
+    train %>% 
+      filter(city == "iq") %>% 
+      mutate(total_cases = na.approx(total_cases)) %>% 
+      gg_tsdisplay(
+        difference(total_cases, 52) %>% difference(), 
+        plot_type = "partial", lag_max = 104
+      )
+    
+    
+    # Lag
+    train %>% 
+      features(total_cases, guerrero)
+    
+    # Density
+    train %>% 
+      filter(city == "iq") %>% 
+      mutate(
+        total_cases = box_cox(total_cases, .151),
+        total_cases = difference(total_cases, 1)
+      ) %>% 
+      ggplot(aes(x = total_cases)) +
+      geom_density()
+    
+    
+    # Decomp
+    train %>% 
+      mutate(total_cases = na.approx(total_cases)) %>% 
+      model(STL(total_cases)) %>% 
+      components() %>% 
+      autoplot()
+  }
+  
+  # Bivariate
+  {
+    train %>% 
+      filter(city == "iq") %>% 
+      mutate(total_cases = box_cox(total_cases, .151)) %>% 
+      GGally::ggpairs(columns = c(10:15, 4))
+    
+    
+    train %>% 
+      filter(city == "iq") %>% 
+      mutate(
+        total_cases = difference(total_cases),
+        across(
+          -c(city, year, weekofyear, week_start_date, yearweak, total_cases), 
+          # difference
+          # \(x){log(x) %>% difference()}
+          \(x){lag(x, 1) %>% difference()}
+        )
+      ) %>% 
+      as_tibble() %>% 
+      select(-c(city, year, weekofyear, week_start_date, yearweak)) %>% #filter(!is.na(total_cases)) %>% cor(use = 'complete.obs')
+      pivot_longer(-total_cases) %>% 
+      ggplot(aes(x = value, y = total_cases, color = name)) +
+      geom_point() +
+      facet_wrap(name ~ ., scales = "free")
+  }
+}
+
+
+# Decomposition
+{
   train %>% 
-    autoplot(log(total_cases))
-  
-  # Seasonality
-  train %>% 
-    gg_season(box_cox(total_cases,0))
-  
-  # Autocorrelation
-  train %>% 
-    filter(city == "iq") %>% 
-    mutate(total_cases = na.approx(total_cases)) %>% 
-    gg_tsdisplay(
-      difference(total_cases, 52) %>% difference(), 
-      plot_type = "partial", lag_max = 104
-    )
-  
-  
-  # Lag
-  train %>% 
-    features(total_cases, guerrero)
-  
-  # Density
-  train %>% 
-    filter(city == "iq") %>% 
-    mutate(
-      total_cases = box_cox(total_cases, .151),
-      total_cases = difference(total_cases, 1)
-    ) %>% 
-    ggplot(aes(x = total_cases)) +
-    geom_density()
-  
-  
-  # Decomp
-  train %>% 
-    mutate(total_cases = na.approx(total_cases)) %>% 
     model(STL(total_cases)) %>% 
     components() %>% 
     autoplot()
 }
 
-# Bivariate
-{
-  train %>% 
-    filter(city == "iq") %>% 
-    mutate(total_cases = box_cox(total_cases, .151)) %>% 
-    GGally::ggpairs(columns = c(10:15, 4))
-  
-  
-  train %>% 
-    filter(city == "iq") %>% 
-    mutate(
-      total_cases = difference(total_cases),
-      across(
-        -c(city, year, weekofyear, week_start_date, yearweak, total_cases), 
-        # difference
-        # \(x){log(x) %>% difference()}
-        \(x){lag(x, 1) %>% difference()}
-      )
-    ) %>% 
-    as_tibble() %>% 
-    select(-c(city, year, weekofyear, week_start_date, yearweak)) %>% #filter(!is.na(total_cases)) %>% cor(use = 'complete.obs')
-    pivot_longer(-total_cases) %>% 
-    ggplot(aes(x = value, y = total_cases, color = name)) +
-    geom_point() +
-    facet_wrap(name ~ ., scales = "free")
-}
 
 # Linear Model
 {
@@ -163,3 +221,5 @@
       )
     }
 }
+
+
