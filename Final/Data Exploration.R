@@ -48,8 +48,8 @@
       mutate(
         across(all_of(vars.fact), na.approx)
       )
-      # filter(yearweek == yearweek("2000 W52")) %>% 
-      # View()
+    
+    
     
     train.all2 %>% 
       # filter(year %in% c(2006:2006)) %>% 
@@ -72,12 +72,22 @@
     #   Need to check residuals to see if those points are outliers
   }
   
+  # Add other vars
+  {
+    train.all.done <- train.all %>% 
+      group_by(year, city) %>% 
+      mutate(
+        cases_ytd = cumsum(total_cases)
+        # cases_ytd = ifelse(weekofyear != 1, coalesce(lag(cases_ytd), 0) + total_cases, total_cases)
+      ) %>% 
+      ungroup()
+  }
   
-  valid <- train.all %>% 
+  valid <- train.all.done %>% 
     group_by(city) %>% 
     slice_max(order_by = yearweek, prop = .2) %>% 
     ungroup()
-  train <- train.all %>% 
+  train <- train.all.done %>% 
     anti_join(y = valid, by = c("city", "yearweek"))
   
   
@@ -92,24 +102,41 @@
 }
 
 
+# Other Calcs
+{
+  years_with_bgn <- train %>% 
+    filter(weekofyear==1) %>% 
+    as_tibble() %>% 
+    select(year, city)
+}
+
+
 # Visualizations
 {
   # Cases
   {
     # Time plot
     train %>% 
-      autoplot(log(total_cases))
+      autoplot(box_cox(total_cases, .25))
     
     # Seasonality
-    train %>% 
-      gg_season(box_cox(total_cases,0))
+    {
+      train %>% 
+        gg_season(box_cox(total_cases,0))
+      
+      
+      train %>% 
+        inner_join(years_with_bgn, by = c("city", "year")) %>% 
+        # gg_season(cases_ytd)
+        gg_season(box_cox(cases_ytd, .25))
+    }
     
     # Autocorrelation
     train %>% 
       filter(city == "iq") %>% 
-      mutate(total_cases = na.approx(total_cases)) %>% 
       gg_tsdisplay(
-        difference(total_cases, 52) %>% difference(), 
+        total_cases,
+        # difference(total_cases, 52) %>% difference(), 
         plot_type = "partial", lag_max = 104
       )
     
@@ -126,7 +153,8 @@
         total_cases = difference(total_cases, 1)
       ) %>% 
       ggplot(aes(x = total_cases)) +
-      geom_density()
+      # geom_histogram() +
+      geom_density(color = "red3")
     
     
     # Decomp
@@ -169,7 +197,13 @@
 # Decomposition
 {
   train %>% 
-    model(STL(total_cases)) %>% 
+    model(STL(box_cox(total_cases, .25))) %>% 
+    components() %>% 
+    autoplot()
+  
+  
+  train %>% 
+    model(STL(box_cox(cases_ytd, .25))) %>% 
     components() %>% 
     autoplot()
 }
