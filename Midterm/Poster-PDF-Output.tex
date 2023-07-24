@@ -1,0 +1,278 @@
+% Options for packages loaded elsewhere
+\PassOptionsToPackage{unicode}{hyperref}
+\PassOptionsToPackage{hyphens}{url}
+%
+\documentclass[
+]{article}
+\usepackage{amsmath,amssymb}
+\usepackage{iftex}
+\ifPDFTeX
+  \usepackage[T1]{fontenc}
+  \usepackage[utf8]{inputenc}
+  \usepackage{textcomp} % provide euro and other symbols
+\else % if luatex or xetex
+  \usepackage{unicode-math} % this also loads fontspec
+  \defaultfontfeatures{Scale=MatchLowercase}
+  \defaultfontfeatures[\rmfamily]{Ligatures=TeX,Scale=1}
+\fi
+\usepackage{lmodern}
+\ifPDFTeX\else
+  % xetex/luatex font selection
+\fi
+% Use upquote if available, for straight quotes in verbatim environments
+\IfFileExists{upquote.sty}{\usepackage{upquote}}{}
+\IfFileExists{microtype.sty}{% use microtype if available
+  \usepackage[]{microtype}
+  \UseMicrotypeSet[protrusion]{basicmath} % disable protrusion for tt fonts
+}{}
+\makeatletter
+\@ifundefined{KOMAClassName}{% if non-KOMA class
+  \IfFileExists{parskip.sty}{%
+    \usepackage{parskip}
+  }{% else
+    \setlength{\parindent}{0pt}
+    \setlength{\parskip}{6pt plus 2pt minus 1pt}}
+}{% if KOMA class
+  \KOMAoptions{parskip=half}}
+\makeatother
+\usepackage{xcolor}
+\usepackage[margin=1in]{geometry}
+\usepackage{graphicx}
+\makeatletter
+\def\maxwidth{\ifdim\Gin@nat@width>\linewidth\linewidth\else\Gin@nat@width\fi}
+\def\maxheight{\ifdim\Gin@nat@height>\textheight\textheight\else\Gin@nat@height\fi}
+\makeatother
+% Scale images if necessary, so that they will not overflow the page
+% margins by default, and it is still possible to overwrite the defaults
+% using explicit options in \includegraphics[width, height, ...]{}
+\setkeys{Gin}{width=\maxwidth,height=\maxheight,keepaspectratio}
+% Set default figure placement to htbp
+\makeatletter
+\def\fps@figure{htbp}
+\makeatother
+\setlength{\emergencystretch}{3em} % prevent overfull lines
+\providecommand{\tightlist}{%
+  \setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+\setcounter{secnumdepth}{-\maxdimen} % remove section numbering
+\usepackage[margin=1in]{geometry}
+\usepackage{multicol}
+\ifLuaTeX
+  \usepackage{selnolig}  % disable illegal ligatures
+\fi
+\IfFileExists{bookmark.sty}{\usepackage{bookmark}}{\usepackage{hyperref}}
+\IfFileExists{xurl.sty}{\usepackage{xurl}}{} % add URL line breaks if available
+\urlstyle{same}
+\hypersetup{
+  pdftitle={Columbia River KCFS Flows},
+  pdfauthor={Shaun Harrington},
+  hidelinks,
+  pdfcreator={LaTeX via pandoc}}
+
+\title{Columbia River KCFS Flows}
+\author{Shaun Harrington}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{multicols}{4}
+
+### Abstract
+
+<!-- The poster will include an abstract summarizing the problem, the significance of the problem, the methods, and the results in about 200 words. -->
+
+The Columbia River provides electrical generation for 14 dams in the Pacific Northwest. The years vary by a large margin and recent months are loosely correlated with the present, providing a difficult situation for medium and long term forecasting. This analysis compares the out-of-sample prediction by means of OLS, ARIMA, ETS, and ensemble models. It is found that ARIMA can be useful for shorter-term forecasts but an OLS model that evaluates the historical seasonal mean is a more reliable method.
+
+
+### Introduction & Significance
+
+<!-- An introduction section with a discussion of three to five references associated with the topic (e.g., energy forecasting if that is what you are doing) and the selected methods (e.g., ETS, ARIMA, Regression, Ensemble). -->
+
+The Columbia River begins in British Columbia, Canada running through Washington state to the Oregon border where it empties into the Pacific Ocean. There are 14 hydroelectric dams along this river, 11 of which are in the US and 3 in Canada. The amount of water that flows through largely determines how much electricity these plants generate, much of which is sold to California. While rains can affect the amount of water in the river, the winter snow pack and heat progression throughout Spring and Summer largely determine how much water will flow in the river. 
+
+An understanding of these flows are important because they determine when turbines should be brought offline for upgrades or repairs, and for calculating if power must be purchased from the wholesale market. To predict these flows, three models will be estimated: ETS, ARIMA, and linear model. A fourth ensemble model will be the average of these. 
+
+####
+
+
+```r
+train %>% 
+    autoplot(flow) +
+    ggtitle("Columbia River Flow (kcfs)")
+```
+
+![](Poster-PDF-Output_files/figure-latex/unnamed-chunk-1-1.pdf)<!-- --> 
+
+
+
+\columnbreak
+
+### Methods
+
+<!-- A methods section discussing the chosen methods and formulation.  -->
+
+#### 
+
+
+```r
+train %>% 
+  gg_season(flow) +
+  ggtitle("Seasonality Plot: Columbia River Flow (kcfs)") +
+  xlab("Month") +
+  theme(legend.position = c(.9, .7))
+```
+
+![](Poster-PDF-Output_files/figure-latex/unnamed-chunk-2-1.pdf)<!-- --> 
+
+
+##### **Linear Model**
+
+The linear model is a tried and true model used in various situations. For flow prediction, only the seasonality, or month, will be used as an exogenous factor. While climate change may introduce a trend to river flows in the very long run, a trend will not be included in this model since we are not making long-term predictions. As such, this model will predict the monthly average within the training set for each month in the test set.
+
+##### **ETS**
+
+The ETS model will be estimated for the level and seasonality. Once again, and for similar reasons, a trend will not be included. 
+
+##### **ARIMA**
+
+The ARIMA model will be determined through the Hyndman-Khandakar algorithm as specified in the *fable* package. 
+
+
+```r
+train %>% 
+  gg_tsdisplay(
+    #difference(flow, 12) %>% difference(),
+    flow,
+    plot_type = "partial", lag_max = 36
+  )
+```
+
+![](Poster-PDF-Output_files/figure-latex/unnamed-chunk-3-1.pdf)<!-- --> 
+
+
+\columnbreak
+
+### Results
+
+<!-- A results section that illustrates the model performance.  -->
+The estimated models produced the following forecasts on the test set:
+
+####
+
+
+```r
+fx %>% 
+  autoplot(
+    data %>% filter(year(date)>2021),
+    # level = NULL
+  ) +
+  ggtitle("Monthly Columbia River Flow Out-of-Sample Forecasts") +
+  facet_grid(.model ~ .) +
+  geom_label(
+    data = fx %>% 
+      accuracy(
+        test, 
+        measures = list(point_accuracy_measures, distribution_accuracy_measures)
+      ),
+    aes(x = -Inf, y = Inf, label = paste(
+      " RMSE:", round(RMSE, 1),
+      "\n", "MAPE: ", round(MAPE, 1),
+      "\n", "CRPS: ", round(CRPS, 1)
+    )),
+    hjust = 0, vjust = 1
+  )
+```
+
+```
+## Using `date` as index variable.
+```
+
+```
+## Warning: Removed 2 rows containing missing values (`()`).
+```
+
+![](Poster-PDF-Output_files/figure-latex/unnamed-chunk-4-1.pdf)<!-- --> 
+
+###### ARIMA Statistics:
+
+
+
+
+
+```r
+fit %>% 
+  select(arima) %>% 
+  report()
+```
+
+```
+## Series: flow 
+## Model: ARIMA(1,0,0)(2,1,0)[12] 
+## Transformation: (flow) 
+## 
+## Coefficients:
+##          ar1     sar1     sar2
+##       0.6751  -0.3875  -0.2046
+## s.e.  0.0636   0.0882   0.0887
+## 
+## sigma^2 estimated as 851.6:  log likelihood=-666.11
+## AIC=1340.23   AICc=1340.52   BIC=1351.96
+```
+
+###### ETS Statistics:
+
+
+```r
+fit %>% 
+  select(ets) %>% 
+  report()
+```
+
+```
+## Series: flow 
+## Model: ETS(M,N,M) 
+##   Smoothing parameters:
+##     alpha = 0.4867502 
+##     gamma = 0.0001012484 
+## 
+##   Initial states:
+##      l[0]      s[0]     s[-1]     s[-2]     s[-3]     s[-4]    s[-5]    s[-6]
+##  123.8028 0.8609289 0.7784877 0.5741357 0.5696651 0.9538401 1.258872 1.695363
+##     s[-7]    s[-8]     s[-9]    s[-10]   s[-11]
+##  1.512702 1.081726 0.8805814 0.9235965 0.910102
+## 
+##   sigma^2:  0.0425
+## 
+##      AIC     AICc      BIC 
+## 1728.484 1732.040 1773.743
+```
+
+
+####
+
+\columnbreak
+
+### Discussion 
+
+<!-- A discussion section that indicates the utility of the models.  -->
+
+The LM does minimize the RMSE, MAPE, and CRPS. A complicating factor is that while strong seasonality does exist, the amount of water in a given year varies by a good margin as do the springs. A cold spring that suddenly turns hot will cause snow to melt faster causing large peaks. In contrast, a warm spring will cause the snow to begin melting earlier, but not necessarily at a fast rate. The linear model predicts each month to be the historical average, producing a decent forecast. 
+
+The ETS and ARIMA models both overestimate the actual flow, likely a result of the high water year for the last period of the training set. The positive ma1 term and negative ma2 term indicate that when there is this large change in the flow, the following month is usually the same direction, but the month after that results in a larger contraction in the opposite direction. This lines up with the warm/cold spring theory postulated in the previous paragraph.
+
+A gamma value near zero in the ETS model indicates that river flows do not respond very much to changes in the prior season. The alpha equal to almost .5 indicates some response to recent months, but not overly so. Together these help explain why the linear model outperformed the other two, more complicated models: the prior years' values are not a good indicator for the current year, and recent months can only go so far. When no exogenous variables are considered, this is nearly a random walk, for which the historical mean is the best approximate. 
+
+
+### Conclusion
+
+Medium and long term predictions of river flows are very difficult without exogenous factors. The higher correlation with more recent periods could imply that short-term forecasts are more achievable. A good approach for the long term is to simply use the historical average, an ARIMA model may prove useful for the shorter term forecasts. Further study using cross validation should be done to determine if a modified ensemble method could be beneficial where the ARIMA model is given a higher weight for the first couple of months and the linear model thereafter. 
+
+### 
+
+
+\begin{flushright}\includegraphics[width=50px,height=10px]{BC Logo3} \end{flushright}
+
+
+\end{multicols}
+
+\end{document}
