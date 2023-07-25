@@ -20,46 +20,87 @@ knitr::opts_chunk$set(
 library(tidyverse)
 library(fpp3)
 library(readxl)
+library(jsonlite)
 
 theme_set(theme_bw())
 
 if(basename(getwd()) != "Week 4") setwd(file.path(getwd(), "Discussions", "Week 4"))
 
-library(jsonlite)
 
-# EIA_API_KEY is environmental variable. 
-#   Must register for an API key here: https://www.eia.gov/opendata/register.php
-eia.key <- EIA_API_KEY
+
+# EIA Data
+{
+  # EIA_API_KEY is environmental variable. 
+  #   Must register for an API key here: https://www.eia.gov/opendata/register.php
+  eia.key <- Sys.getenv("EIA_API_KEY")
+  
+    
+  fn_query_eia <- function(
+    the_series_id, the_source = "steo", the_frequency = "monthly", the_facet = "seriesId",
+    the_offset = 0, the_length = 5000, the_eia_key = eia.key){
+    
+    the_url = "https://api.eia.gov/v2/"
+    
+    # Query must be no more than 5,000
+    if(the_length > 5000) break
+    
+    get_call <- paste0(the_url, the_source, "/data/?", paste(
+      paste0("frequency=", the_frequency), 
+      "data[0]=value", 
+      paste0("facets[", the_facet, "][]=", the_series_id), 
+      "sort[0][column]=period", 
+      "sort[0][direction]=desc", 
+      paste0("offset=", the_offset), 
+      paste0("length=", the_length),
+      sep = "&"
+    ))
+
+    eia_list <- fromJSON(str_c(get_call, "&api_key=", the_eia_key))
+    
+    eia_data <- eia_list$response$data
+    
+    eia_data %>% 
+      as_tibble() %>% 
+      return()
+  }
   
   
-fn_query_eia <- function(
-  the_series_id, the_source = "steo", the_frequency = "monthly", 
-  the_offset = 0, the_length = 5000, the_eia_key = eia.key){
   
-  the_url = "https://api.eia.gov/v2/"
+  # HDD
+  hdd <- "ZWHDPUS" %>% fn_query_eia() %>%
+    rename(hdd = value) %>% 
+    mutate(date = ym(period) %>% yearmonth()) %>% 
+    select(date, hdd)
   
-  # Query must be no more than 5,000
-  if(the_length > 5000) break
+  # CDD
+  cdd <- "ZWCDPUS" %>% fn_query_eia() %>%
+    rename(cdd = value) %>% 
+    mutate(date = ym(period) %>% yearmonth()) %>% 
+    select(date, cdd)
   
-  get_call <- paste0(the_url, the_source, "/data/?", paste(
-    paste0("frequency=", the_frequency), 
-    "data[0]=value", 
-    paste0("facets[seriesId][]=", the_series_id), 
-    "sort[0][column]=period", 
-    "sort[0][direction]=desc", 
-    paste0("offset=", the_offset), 
-    paste0("length=", the_length),
-    sep = "&"
-  ))
-  
-  eia_list <- fromJSON(str_c(get_call, "&api_key=", the_eia_key))
-  
-  eia_data <- eia_list$response$data
-  
-  eia_data %>% 
-    as_tibble() %>% 
-    return()
+  # Electricity
+  consumption <- "ELTCPUS" %>% fn_query_eia(the_source = "total-energy", the_facet = "msn") %>%
+    mutate(
+      date = ym(period) %>% yearmonth(),
+      GWh = value 
+    ) %>% 
+    select(date, GWh)
 }
+
+
+# FRED
+{
+  # Using CEI as proxy for monthly GDP
+  gdp <- fredr::fredr("USPHCI") %>% 
+    mutate(date = yearmonth(date)) %>% 
+    rename(gdp = value) %>% 
+    select(date, gdp)
+  
+}
+
+data <- purrr::reduce(list(hdd, cdd, consumption, gdp), inner_join)
+
+
 
 ```
 
@@ -72,27 +113,13 @@ fn_query_eia <- function(
 
 ```{r}
 
-# https://data.world/us-doe-gov/f047b651-160c-447b-8c96-1da78719f914/workspace/file?filename=energy-consumption-1.xls
-data <- read_xlsx("energy-consumption-1.xlsx", skip = 9) %>% 
-    filter(!is.na(Month)) %>% 
-    mutate(across(-Month, as.numeric)) %>% 
-    mutate(Month = tsibble::yearmonth(ymd(Month))) %>% 
-    tsibble() %>% 
-    select(1:3) %>% 
-    rename_with(~c("month", "residential.primary", "residential.total"))
-
-
-```
-
-
-```{r}
-
 test <- data %>% 
   slice_max(order_by = date, n = 24) %>% 
-  tsibble(index = month)
+  tsibble(index = date)
 train <- data %>% 
   anti_join(y = test, by = "date") %>% 
   tsibble(index = date)
+
 
 ```
 
@@ -106,8 +133,8 @@ train <- data %>%
 #| fig-height: 4
 
 train %>% 
-  autoplot(cases) +
-  ggtitle("Monthly Chickenpox Cases in Hungary")
+  autoplot(GWh) +
+  ggtitle("Monthly Gigawatt-hour Electricity Sales in US")
 
 ```
 
@@ -118,8 +145,8 @@ train %>%
 #| fig-height: 4
 
 train %>% 
-  gg_season(cases) +
-  ggtitle("Seasonality Plot: Monthly Chickenpox Cases in Hungary")
+  gg_season(GWh) +
+  ggtitle("Seasonality Plot: Monthly Gigawatt-hour Electricity Sales in US")
 
 ```
 
@@ -132,7 +159,19 @@ train %>%
 ```{r}
 
 train %>% 
-  gg_tsdisplay(difference(log(cases), 12) %>% difference(), plot_type = "partial", lag_max = 36)
+  gg_tsdisplay(GWh, plot_type = "partial", lag_max = 36)
+
+```
+
+
+#### Decomposition
+
+```{r}
+
+train %>% 
+  model(STL(GWh)) %>% 
+  components() %>% 
+  autoplot()
 
 ```
 
@@ -147,8 +186,12 @@ train %>%
 
 (fit <- train %>% 
   model(
-    "ets" = ETS(log(cases) ~ error("A") + trend("A") + season("A")),
-    "arima" = ARIMA(log(cases))
+    "ets" = ETS(GWh),
+    "ets.log" = ETS(log(GWh)),
+    "arima" = ARIMA(GWh),
+    "arima.log" = ARIMA(log(GWh)),
+    "arimax" = ARIMA(GWh ~ hdd + cdd),
+    "arimax.log" = ARIMA(log(GWh) ~ log(hdd) + log(cdd))
   ))
 
 
@@ -174,10 +217,10 @@ The models were trained on data prior to `r max(as.Date(train$date)) + months(1)
 
   fx %>% 
     autoplot(
-        data %>% filter(year(date)>2013),
+        data %>% filter(year(date)>2020),
         level = NULL
       ) +
-        ggtitle("Monthly Chickenpox Case Out-of-Sample Forecast")
+        ggtitle("US Gigawatt-hour Electricity Sales Out-of-Sample Forecast")
 
 ```
 
