@@ -8,6 +8,8 @@ editor_options:
 
 ## Setup
 
+This week I'm regressing exogenous variables on US electricity sales. I'll be using heating and cooling degree days, which are transformations on temperature to help linearize it with electricity consumption, and a psuedo real GDP
+
 ```{r}
 #| warning: false
 
@@ -91,15 +93,19 @@ if(basename(getwd()) != "Week 4") setwd(file.path(getwd(), "Discussions", "Week 
 # FRED
 {
   # Using CEI as proxy for monthly GDP
-  gdp <- fredr::fredr("USPHCI") %>% 
+  cei <- fredr::fredr("USPHCI") %>% 
+    mutate(date = yearmonth(date)) %>% 
+    rename(cei = value) %>% 
+    select(date, cei)
+  
+  gdp <- fredr::fredr("GDPC1") %>% 
     mutate(date = yearmonth(date)) %>% 
     rename(gdp = value) %>% 
     select(date, gdp)
   
 }
 
-data <- purrr::reduce(list(hdd, cdd, consumption, gdp), inner_join)
-
+data <- purrr::reduce(list(hdd, cdd, consumption, cei), inner_join)
 
 
 ```
@@ -152,6 +158,17 @@ train %>%
 
 
 
+```{r}
+#| fig-height: 5
+
+train %>% 
+  gg_subseries(GWh) +
+  ggtitle("Subseries Plot: Monthly Gigawatt-hour Electricity Sales in US")
+
+```
+
+
+
 #### Autocorrelation
 
 
@@ -166,6 +183,8 @@ train %>%
 
 #### Decomposition
 
+The decomposition highlights some important features of this time series. Most apparent is the changing seasonality, likely from an increased usage of air conditioners throughout the US. The trend also appears correlated with the business cycle as evidenced by the decrease during 2001 and 2008 recessions. 
+
 ```{r}
 
 train %>% 
@@ -174,6 +193,51 @@ train %>%
   autoplot()
 
 ```
+
+
+#### CEI vs GDP
+
+To account for the business cycle correlation, the Coincident Economic Index (CEI) by the Federal Reserve Bank of Philadelphia will be used. Since US GDP is released quarterly, the CEI will be used instead. The CEI is highly correlated with GDP and should suffice. An alternative measure that could also work would be the Industrial Production Index, though that would not contain changes due to residential and commercial customer behavior.
+
+```{r}
+
+train %>% 
+  left_join(y = gdp) %>% 
+  ggplot(aes(x = scale(gdp), y = scale(cei), color = as.Date(date))) +
+  geom_point() +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+  ggtitle("Real GDP & Coincident Economic Index") #+
+  # scale_color_viridis_c()
+
+```
+
+#### Correlations with Electricity
+
+
+
+```{r}
+
+train %>% 
+  pivot_longer(-c(date, GWh)) %>% 
+  ggplot(aes(y = log(GWh), x = (value), color = name)) +
+  geom_point() +
+  facet_wrap(name ~ ., scales = "free")
+
+```
+
+Though there appears to be a parabolic relation between HDD and CDD with Electricity Sales, this is likely a result of months where there are both CDD and HDD. The below chart shows the correlation between Sales and HDD after removing the correlation with CDD. Though some non-linearity exists, it is much better. This could indicate struggling performance in the "shoulder months", spring and fall, where both CDD and HDD are found.
+
+```{r}
+
+train %>% 
+  model(TSLM((GWh) ~ (cdd))) %>% #gg_tsresiduals()
+  augment() %>% 
+  left_join(train) %>% 
+  ggplot(aes(x = hdd, y = .resid)) +
+  geom_point()
+
+```
+
 
 
 ## Modeling
@@ -187,11 +251,11 @@ train %>%
 (fit <- train %>% 
   model(
     "ets" = ETS(GWh),
-    "ets.log" = ETS(log(GWh)),
-    "arima" = ARIMA(GWh),
-    "arima.log" = ARIMA(log(GWh)),
-    "arimax" = ARIMA(GWh ~ hdd + cdd),
-    "arimax.log" = ARIMA(log(GWh) ~ log(hdd) + log(cdd))
+    "arima" = ARIMA(log(GWh)),
+    "arimax1" = ARIMA(GWh ~ hdd + cdd + cei),
+    "arimax2" = ARIMA(GWh ~ log(hdd) + log(cdd) + log(cei)),
+    "arimax3" = ARIMA(log(GWh) ~ hdd + cdd + cei),
+    "arimax4" = ARIMA(log(GWh) ~ log(hdd) + log(cdd) + log(cei))
   ))
 
 
@@ -202,6 +266,7 @@ train %>%
 ```{r}
 glance(fit)
 ```
+
 
 
 ### Forecast
@@ -226,11 +291,54 @@ The models were trained on data prior to `r max(as.Date(train$date)) + months(1)
 
 #### Metrics
 
+The model *arimax3* performs best on both the point estimate metrics and along the probability distribution. 
 
 ```{r}
 
 fx %>% 
-  accuracy(test)
+  accuracy(test) %>% 
+  arrange(RMSE)
 
 ```
 
+
+```{r}
+
+fx %>% 
+  accuracy(test, measures = distribution_accuracy_measures) %>% 
+  arrange(CRPS)
+
+```
+
+
+#### Model Statistics
+
+*arimax3* is the model where sales are log transformed but not the regressors, and it has both an ordinary and seasonal difference. The coefficients in this model roughly translate to, "a unit increase to X results in a \beta % increase to electricity sales."
+
+```{r}
+
+fit %>% 
+  select(arimax3) %>% 
+  report()
+
+```
+
+The residuals appear to be white noise which is confirmed with the Ljung-Box test. 
+
+```{r}
+
+fit %>% 
+  select(arimax3) %>% 
+  gg_tsresiduals()
+
+```
+
+
+```{r}
+
+fit %>% 
+  select(arimax3) %>% 
+  augment() %>% 
+  features(.innov, ljung_box)
+
+```
