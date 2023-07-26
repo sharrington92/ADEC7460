@@ -189,9 +189,9 @@ train %>%
     "ets" = ETS(sales.gas),
     "arima" = ARIMA((sales.gas)),
     "dynamic1" = ARIMA(sales.gas ~ gas.price),
-    "dynamic2" = ARIMA(sales.gas ~ cpi.gas),
-    "dynamic3" = ARIMA(sales.gas ~ miles.driven),
-    "dynamic4" = ARIMA(sales.gas ~ gas.price + miles.driven)
+    # "dynamic2" = ARIMA(sales.gas ~ cpi.gas),
+    # "dynamic3" = ARIMA(sales.gas ~ miles.driven),
+    # "dynamic4" = ARIMA(sales.gas ~ gas.price + miles.driven)
   ))
 
 
@@ -251,7 +251,7 @@ fx %>%
 
 ```
 
-##### Ensemble
+#### Ensemble
 
 ```{r}
 
@@ -300,6 +300,40 @@ fx2 <- fit2 %>%
   fx2 %>% 
     accuracy(test, measures = distribution_accuracy_measures) %>% 
     arrange(CRPS)
+
+```
+
+
+#### VAR
+
+```{r}
+
+fit.var <- train %>% 
+  model("var" = VAR(vars(sales.gas, cpi.gas)))
+
+report(fit.var)
+
+```
+
+
+```{r}
+
+fx.var <- fit.var %>% 
+  forecast(test)
+
+fx.var %>% 
+  autoplot(
+      data %>% filter(year(date)>2020),
+      level = NULL, size = .75, alpha = .75
+    ) 
+
+fx.var %>% 
+  accuracy(test) %>% 
+  arrange(RMSE)
+
+fx.var %>% 
+  accuracy(test, measures = distribution_accuracy_measures) %>% 
+  arrange(CRPS)
 
 ```
 
