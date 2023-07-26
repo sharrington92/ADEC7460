@@ -1,0 +1,303 @@
+---
+title: "Assignment 2"
+author: "Shaun Harrington"
+format: 
+  html:
+    toc: true
+    code-fold: true
+editor_options: 
+  chunk_output_type: console
+---
+
+## Setup
+
+
+
+```{r}
+#| warning: false
+
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE
+)
+
+library(tidyverse)
+library(fpp3)
+library(fredr)
+# library(tidycensus)
+
+theme_set(theme_bw())
+
+if(basename(getwd()) != "Assignment 2") setwd(file.path(getwd(), "Assignments", "Assignment 2"))
+
+
+
+```
+
+### Get Data
+
+```{r}
+
+url <- "https://www.census.gov/retail/marts/www/adv44700.txt"
+
+# gasoline sales
+data.gas <- read_table(url, skip = 1, n_max = 31) %>% 
+  rename_with(~c("year", as.character(1:12))) %>% 
+  pivot_longer(-year, names_to = "month", values_to = "sales.gas")
+
+```
+
+
+```{r}
+
+fred.data <- c("GASREGW", "CUUR0000SETB01", "TRFVOLUSM227NFWA") %>% 
+  lapply(\(x){
+    fredr(x, frequency = "m")
+  })
+
+
+
+```
+
+
+
+
+## Preliminary Analysis
+
+
+### Data Preparation
+
+
+
+```{r}
+
+test <- data %>% 
+  slice_max(order_by = date, n = 24) %>% 
+  tsibble(index = date)
+train <- data %>% 
+  anti_join(y = test, by = "date") %>% 
+  tsibble(index = date)
+
+
+```
+
+
+
+### Data Exploration
+
+#### Electricity Sales Plots
+
+Electricity sales increased rapidly through the 1990s and early 2000s, but have since leveled off.
+
+```{r}
+#| fig-height: 4
+
+train %>% 
+  autoplot(GWh) +
+  ggtitle("Monthly Gigawatt-hour Electricity Sales in US")
+
+```
+
+There does appear to be increasing peaks relative to the troughs.
+
+```{r}
+#| fig-height: 4
+
+train %>% 
+  gg_season(GWh) +
+  ggtitle("Seasonality Plot: Monthly Gigawatt-hour Electricity Sales in US")
+
+```
+
+The leveling off of the 2010s appears to have mostly occurred in the shoulder months of Spring and Fall.
+
+```{r}
+#| fig-height: 5
+
+train %>% 
+  gg_subseries(GWh) +
+  ggtitle("Subseries Plot: Monthly Gigawatt-hour Electricity Sales in US")
+
+```
+
+
+
+
+```{r}
+#| eval: false
+
+
+train %>% 
+  gg_tsdisplay(GWh, plot_type = "partial", lag_max = 36)
+
+```
+
+
+#### Decomposition
+
+The decomposition highlights some important features of this time series. Most apparent is the changing seasonality, likely from an increased usage of air conditioners throughout the US. The trend also appears correlated with the business cycle as evidenced by the decrease during 2001 and 2008 recessions. 
+
+```{r}
+
+train %>% 
+  model(STL(GWh)) %>% 
+  components() %>% 
+  autoplot()
+
+```
+
+
+#### CEI vs GDP
+
+To account for the business cycle correlation, the Coincident Economic Index (CEI) by the Federal Reserve Bank of Philadelphia will be used. Since US GDP is released quarterly, the CEI will be used instead. The CEI is highly correlated with GDP, and the business cycle, and should suffice. An alternative measure that could also work would be the Industrial Production Index, though that would not contain changes due to residential and commercial customer behavior.
+
+```{r}
+
+train %>% 
+  left_join(y = gdp) %>% 
+  ggplot(aes(x = scale(gdp), y = scale(cei), color = as.Date(date))) +
+  geom_point() +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+  ggtitle("Real GDP & Coincident Economic Index") #+
+  # scale_color_viridis_c()
+
+```
+
+#### Correlations with Electricity
+
+
+
+```{r}
+
+train %>% 
+  pivot_longer(-c(date, GWh)) %>% 
+  ggplot(aes(y = log(GWh), x = (value), color = name)) +
+  geom_point() +
+  facet_wrap(name ~ ., scales = "free")
+
+```
+
+Though there appears to be a parabolic relation between HDD and CDD with Electricity Sales, this is likely a result of months where there are both CDD and HDD. The below chart shows the correlation between Sales and HDD after removing the correlation with CDD. Though some non-linearity exists, it is much better. This could indicate struggling performance in the "shoulder months", spring and fall, where both CDD and HDD are found.
+
+```{r}
+
+train %>% 
+  model(TSLM((GWh) ~ (cdd))) %>% #gg_tsresiduals()
+  augment() %>% 
+  left_join(train) %>% 
+  ggplot(aes(x = hdd, y = .resid)) +
+  geom_point()
+
+```
+
+
+
+## Modeling
+
+#### Estimation
+
+I'll be estimating six models of two types. One ETS model as a comparison and five ARIMA models with various transformations and included regressors.
+
+
+```{r}
+
+
+(fit <- train %>% 
+  model(
+    "ets" = ETS(GWh),
+    "arima" = ARIMA(log(GWh)),
+    "arimax1" = ARIMA(GWh ~ hdd + cdd + cei),
+    "arimax2" = ARIMA(GWh ~ log(hdd) + log(cdd) + log(cei)),
+    "arimax3" = ARIMA(log(GWh) ~ hdd + cdd + cei),
+    "arimax4" = ARIMA(log(GWh) ~ log(hdd) + log(cdd) + log(cei))
+  ))
+
+
+```
+
+The differing model types makes it difficult to compare using information criteria. The best way to compare these models are on out-of-sample forecasts. 
+
+```{r}
+glance(fit)
+```
+
+
+
+### Forecast
+
+The models were trained on data prior to `r max(as.Date(train$date)) + months(1)`. The forecast period is the interval `r lubridate::interval(min(as.Date(test$date)), max(as.Date(test$date)))`. 
+
+
+
+```{r}
+
+  fx <- fit %>% 
+        forecast(test)
+  
+
+  fx %>% 
+    autoplot(
+        # data %>% filter(year(date)>2020),
+        level = NULL, size = .75, alpha = .75
+      ) +
+    autolayer(
+      data %>% tsibble() %>% filter(year(date)>2020), GWh, 
+      size = 1, alpha = .75#, linetype = "dashed"
+    ) +
+    ggtitle("US Gigawatt-hour Electricity Sales Out-of-Sample Forecast") + 
+    scale_color_viridis_d()
+
+```
+
+The model *arimax3* performs best on both the point estimate metrics and along the probability distribution. The ETS and ARIMA model without exogenous regressors performed worst, indicating these regressors do aid in the predictions. 
+
+```{r}
+
+fx %>% 
+  accuracy(test) %>% 
+  arrange(RMSE)
+
+```
+
+
+```{r}
+
+fx %>% 
+  accuracy(test, measures = distribution_accuracy_measures) %>% 
+  arrange(CRPS)
+
+```
+
+
+#### Model Statistics
+
+*arimax3* is the model where sales are log transformed but not the regressors;  it has both an ordinary and seasonal difference. The coefficients in this model roughly translate to, "a unit increase to X results in a \beta % increase to electricity sales."
+
+```{r}
+
+fit %>% 
+  select(arimax3) %>% 
+  report()
+
+```
+
+The residuals appear to be white noise which is confirmed with the Ljung-Box test. 
+
+```{r}
+
+fit %>% 
+  select(arimax3) %>% 
+  gg_tsresiduals()
+
+```
+
+
+```{r}
+
+fit %>% 
+  select(arimax3) %>% 
+  augment() %>% 
+  features(.innov, ljung_box)
+
+```
