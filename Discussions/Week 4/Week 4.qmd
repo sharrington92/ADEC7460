@@ -133,7 +133,9 @@ train <- data %>%
 
 ### Data Exploration
 
-#### Time Plots 
+#### Electricity Sales Plots
+
+Electricity sales increased rapidly through the 1990s and early 2000s, but have since leveled off.
 
 ```{r}
 #| fig-height: 4
@@ -144,8 +146,7 @@ train %>%
 
 ```
 
-#### Seasonality Plots
-
+There does appear to be increasing peaks relative to the troughs.
 
 ```{r}
 #| fig-height: 4
@@ -156,7 +157,7 @@ train %>%
 
 ```
 
-
+The leveling off of the 2010s appears to have mostly occurred in the shoulder months of Spring and Fall.
 
 ```{r}
 #| fig-height: 5
@@ -169,11 +170,10 @@ train %>%
 
 
 
-#### Autocorrelation
-
-
 
 ```{r}
+#| eval: false
+
 
 train %>% 
   gg_tsdisplay(GWh, plot_type = "partial", lag_max = 36)
@@ -197,7 +197,7 @@ train %>%
 
 #### CEI vs GDP
 
-To account for the business cycle correlation, the Coincident Economic Index (CEI) by the Federal Reserve Bank of Philadelphia will be used. Since US GDP is released quarterly, the CEI will be used instead. The CEI is highly correlated with GDP and should suffice. An alternative measure that could also work would be the Industrial Production Index, though that would not contain changes due to residential and commercial customer behavior.
+To account for the business cycle correlation, the Coincident Economic Index (CEI) by the Federal Reserve Bank of Philadelphia will be used. Since US GDP is released quarterly, the CEI will be used instead. The CEI is highly correlated with GDP, and the business cycle, and should suffice. An alternative measure that could also work would be the Industrial Production Index, though that would not contain changes due to residential and commercial customer behavior.
 
 ```{r}
 
@@ -244,6 +244,8 @@ train %>%
 
 #### Estimation
 
+I'll be estimating six models of two types. One ETS model as a comparison and five ARIMA models with various transformations and included regressors.
+
 
 ```{r}
 
@@ -261,7 +263,7 @@ train %>%
 
 ```
 
-
+The differing model types makes it difficult to compare using information criteria. The best way to compare these models are on out-of-sample forecasts. 
 
 ```{r}
 glance(fit)
@@ -274,6 +276,7 @@ glance(fit)
 The models were trained on data prior to `r max(as.Date(train$date)) + months(1)`. The forecast period is the interval `r lubridate::interval(min(as.Date(test$date)), max(as.Date(test$date)))`. 
 
 
+
 ```{r}
 
   fx <- fit %>% 
@@ -282,16 +285,19 @@ The models were trained on data prior to `r max(as.Date(train$date)) + months(1)
 
   fx %>% 
     autoplot(
-        data %>% filter(year(date)>2020),
-        level = NULL
+        # data %>% filter(year(date)>2020),
+        level = NULL, size = .75, alpha = .75
       ) +
-        ggtitle("US Gigawatt-hour Electricity Sales Out-of-Sample Forecast")
+    autolayer(
+      data %>% tsibble() %>% filter(year(date)>2020), GWh, 
+      size = 1, alpha = .75#, linetype = "dashed"
+    ) +
+    ggtitle("US Gigawatt-hour Electricity Sales Out-of-Sample Forecast") + 
+    scale_color_viridis_d()
 
 ```
 
-#### Metrics
-
-The model *arimax3* performs best on both the point estimate metrics and along the probability distribution. 
+The model *arimax3* performs best on both the point estimate metrics and along the probability distribution. The ETS and ARIMA model without exogenous regressors performed worst, indicating these regressors do aid in the predictions. 
 
 ```{r}
 
@@ -313,7 +319,7 @@ fx %>%
 
 #### Model Statistics
 
-*arimax3* is the model where sales are log transformed but not the regressors, and it has both an ordinary and seasonal difference. The coefficients in this model roughly translate to, "a unit increase to X results in a \beta % increase to electricity sales."
+*arimax3* is the model where sales are log transformed but not the regressors;  it has both an ordinary and seasonal difference. The coefficients in this model roughly translate to, "a unit increase to X results in a \beta % increase to electricity sales."
 
 ```{r}
 
