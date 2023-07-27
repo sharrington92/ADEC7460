@@ -31,6 +31,15 @@ library(scales)
 
 theme_set(theme_bw())
 
+if(!str_detect(basename(getwd()), "Time Series") & str_detect(dirname(getwd()), "Time Series")){
+  repeat{
+    setwd("../")
+    if(str_detect(basename(getwd()), "Time Series")){
+      break
+    }
+  }
+} 
+
 if(basename(getwd()) != "Assignment 2") setwd(file.path(getwd(), "Assignments", "Assignment 2"))
 
 
@@ -38,6 +47,8 @@ if(basename(getwd()) != "Assignment 2") setwd(file.path(getwd(), "Assignments", 
 ```
 
 ### Get Data
+
+Gasoline station sales will be retrieved from the US Census. 
 
 ```{r}
 
@@ -52,6 +63,7 @@ data.gas <- read_table(url, skip = 1, n_max = 31) %>%
 
 ```
 
+Gasoline and diesel prices will be retrieved via the Federal Reserve Economics Database.
 
 ```{r}
 
@@ -71,6 +83,7 @@ fred.data <- c("GASREGW", "CUUR0000SETB01", "TRFVOLUSM227NFWA", "GASDESM") %>%
 
 ```
 
+The data is split into two datasets, a training and testing dataset. The testing set are the most recent 12 months, while the training set are the 48 months preceding that. 
 
 ```{r}
 
@@ -91,9 +104,56 @@ train <- data %>%
   anti_join(y = test, by = "date") %>% 
   tsibble()
 
+
 ```
 
+However, gas and diesel prices aren't known for true forecasts and the test set must be adjusted for that. These prices will be estimated using a vector autoregression (VAR). 
 
+```{r}
+
+test.fx <- train %>% 
+  model(VAR(vars(gas.price, diesel.price))) %>% 
+  forecast(h = 12) 
+
+test.fx %>% 
+  autoplot(data %>% filter(year(date) > 2018) %>% tsibble())
+
+```
+
+Since gas and diesel prices are very difficult to forecast, we will consider a scenario forecasting approach with a low price (20th percentile), medium price (point estimate), and high price (80th percentile) scenarios.  
+
+```{r}
+
+test_all.scenarios <- test.fx %>% 
+  hilo(level = c(80)) %>% 
+  mutate(
+    gas.price_med = .mean[,"gas.price"],
+    gas.price_low = `80%`$gas.price$lower,
+    gas.price_high = `80%`$gas.price$upper,
+    
+    diesel.price_med = .mean[,"diesel.price"],
+    diesel.price_low = `80%`$diesel.price$lower,
+    diesel.price_high = `80%`$diesel.price$upper
+  ) %>% 
+  select(
+    date, gas.price_med, gas.price_high, gas.price_low, 
+    diesel.price_med, diesel.price_high, diesel.price_low
+  ) %>% 
+  left_join(x = test, by = "date")
+
+test.low <- test_all.scenarios %>% 
+  select(date, sales.gas, contains("low")) %>% 
+  rename_with(~str_replace_all(.x, "_low", ""))
+
+test.med <- test_all.scenarios %>% 
+  select(date, sales.gas, contains("med")) %>% 
+  rename_with(~str_replace_all(.x, "_med", ""))
+
+test.high <- test_all.scenarios %>% 
+  select(date, sales.gas, contains("high")) %>% 
+  rename_with(~str_replace_all(.x, "_high", ""))
+
+```
 
 
 ## Preliminary Analysis
