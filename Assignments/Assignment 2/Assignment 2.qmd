@@ -120,7 +120,7 @@ test.fx %>%
 
 ```
 
-Since gas and diesel prices are very difficult to forecast, we will consider a scenario forecasting approach with a low price (20th percentile), medium price (point estimate), and high price (80th percentile) scenarios.  
+Since gas and diesel prices are very difficult to forecast, we will consider a scenario forecasting approach with a low price (20th percentile), medium price (point estimate), and high price (80th percentile) scenarios. 
 
 ```{r}
 
