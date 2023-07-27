@@ -117,7 +117,7 @@ train %>%
 ```{r}
 
 train %>% 
-  select(date, sales.gas, gas.price, miles.driven) %>% 
+  # select(date, sales.gas, gas.price, miles.driven) %>% 
   pivot_longer(-date) %>% 
   ggplot(aes(x = date, y = value, color = name)) +
   geom_line() +
@@ -189,9 +189,11 @@ train %>%
     "ets" = ETS(sales.gas),
     "arima" = ARIMA((sales.gas)),
     "dynamic1" = ARIMA(sales.gas ~ gas.price),
-    # "dynamic2" = ARIMA(sales.gas ~ cpi.gas),
-    # "dynamic3" = ARIMA(sales.gas ~ miles.driven),
-    # "dynamic4" = ARIMA(sales.gas ~ gas.price + miles.driven)
+    "dynamic2" = ARIMA(sales.gas ~ cpi.gas),
+    "dynamic3" = ARIMA(sales.gas ~ diesel.price),
+    "dynamic4" = ARIMA(sales.gas ~ miles.driven),
+    "dynamic5" = ARIMA(sales.gas ~ gas.price + miles.driven + diesel.price),
+    "dynamic6" = ARIMA(sales.gas ~ gas.price + diesel.price)
   ))
 
 
