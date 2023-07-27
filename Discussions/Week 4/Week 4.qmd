@@ -95,20 +95,33 @@ if(basename(getwd()) != "Week 4") setwd(file.path(getwd(), "Discussions", "Week 
 
 # FRED
 {
-  # Using CEI as proxy for monthly GDP
-  cei <- fredr::fredr("USPHCI") %>% 
-    mutate(date = yearmonth(date)) %>% 
-    rename(cei = value) %>% 
-    select(date, cei)
-  
-  gdp <- fredr::fredr("GDPC1") %>% 
-    mutate(date = yearmonth(date)) %>% 
-    rename(gdp = value) %>% 
-    select(date, gdp)
+  # # Using CEI as proxy for monthly GDP
+  # cei <- fredr::fredr("USPHCI") %>% 
+  #   mutate(date = yearmonth(date)) %>% 
+  #   rename(cei = value) %>% 
+  #   select(date, cei)
+  # 
+  # 
+  # lei <- fredr::fredr("BBKMLEIX") %>% 
+  #   mutate(date = yearmonth(date)) %>% 
+  #   rename(lei = value) %>% 
+  #   select(date, lei) %>% 
+  #   arrange(date) %>% 
+  #   mutate(
+  #     lei = 100*cumprod(1+lei/100)
+  #   )
+  # 
+  # gdp <- fredr::fredr("GDPC1") %>% 
+  #   mutate(date = yearmonth(date)) %>% 
+  #   rename(gdp = value) %>% 
+  #   select(date, gdp)
   
 }
 
-data <- purrr::reduce(list(hdd, cdd, consumption, cei), inner_join)
+data <- purrr::reduce(list(
+  hdd, cdd, consumption
+  # , cei, lei
+), inner_join)
 
 
 ```
@@ -198,21 +211,6 @@ train %>%
 ```
 
 
-#### CEI vs GDP
-
-To account for the business cycle correlation, the Coincident Economic Index (CEI) by the Federal Reserve Bank of Philadelphia will be used. Since US GDP is released quarterly, the CEI will be used instead. The CEI is highly correlated with GDP, and the business cycle, and should suffice. An alternative measure that could also work would be the Industrial Production Index, though that would not contain changes due to residential and commercial customer behavior.
-
-```{r}
-
-train %>% 
-  left_join(y = gdp) %>% 
-  ggplot(aes(x = scale(gdp), y = scale(cei), color = as.Date(date))) +
-  geom_point() +
-  geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
-  ggtitle("Real GDP & Coincident Economic Index") #+
-  # scale_color_viridis_c()
-
-```
 
 #### Correlations with Electricity
 
@@ -243,6 +241,7 @@ train %>%
 
 
 
+
 ## Modeling
 
 #### Estimation
@@ -257,10 +256,10 @@ I'll be estimating six models of two types. One ETS model as a comparison and fi
   model(
     "ets" = ETS(GWh),
     "arima" = ARIMA(log(GWh)),
-    "arimax1" = ARIMA(GWh ~ hdd + cdd + cei),
-    "arimax2" = ARIMA(GWh ~ log(hdd) + log(cdd) + log(cei)),
-    "arimax3" = ARIMA(log(GWh) ~ hdd + cdd + cei),
-    "arimax4" = ARIMA(log(GWh) ~ log(hdd) + log(cdd) + log(cei))
+    "arimax1" = ARIMA(GWh ~ hdd + cdd),
+    "arimax2" = ARIMA(GWh ~ log(hdd) + log(cdd)),
+    "arimax3" = ARIMA(log(GWh) ~ hdd + cdd),
+    "arimax4" = ARIMA(log(GWh) ~ log(hdd) + log(cdd))
   ))
 
 
@@ -302,6 +301,7 @@ The models were trained on data prior to `r max(as.Date(train$date)) + months(1)
 
 The model *arimax3* performs best on both the point estimate metrics and along the probability distribution. The ETS and ARIMA model without exogenous regressors performed worst, indicating these regressors do aid in the predictions. 
 
+
 ```{r}
 
 fx %>% 
@@ -318,6 +318,7 @@ fx %>%
   arrange(CRPS)
 
 ```
+
 
 
 #### Model Statistics
@@ -351,3 +352,58 @@ fit %>%
   features(.innov, ljung_box)
 
 ```
+
+
+
+### Actual Forecast
+
+Since HDD and CDD aren't actually known the above forecast underestimates the forecast error, a true forecast will not know the future values of CDD and HDD. 
+
+```{r}
+
+test.with.unknown <- test %>% 
+  rename(hdd.actual = hdd, cdd.actual = cdd) %>% 
+  mutate(month = month(date)) %>% 
+  left_join(
+    y = train %>% 
+      as_tibble() %>% 
+      filter(year(date) >= 2010) %>% 
+      mutate(month = month(date)) %>% 
+      group_by(month) %>% 
+      summarize(across(c(hdd, cdd), mean)) %>% 
+      ungroup(),
+    by = "month"
+  )
+
+```
+
+
+```{r}
+
+  fx.true <- fit %>% 
+        forecast(test.with.unknown)
+  
+
+  fx.true %>% 
+    autoplot(
+        # data %>% filter(year(date)>2020),
+        level = NULL,
+        size = .75, alpha = .75
+      ) +
+    autolayer(
+      data %>% tsibble() %>% filter(year(date)>2020), GWh, 
+      size = 1, alpha = .75#, linetype = "dashed"
+    ) +
+    ggtitle("US Gigawatt-hour Electricity Sales Out-of-Sample Forecast") + 
+    scale_color_viridis_d()
+
+```
+
+
+```{r}
+
+fx.true %>% 
+  accuracy(test.with.unknown)
+
+```
+
