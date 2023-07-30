@@ -67,7 +67,10 @@ Gasoline and diesel prices will be retrieved via the Federal Reserve Economics D
 
 ```{r}
 
-fred.data <- c("GASREGW", "CUUR0000SETB01", "TRFVOLUSM227NFWA", "GASDESM") %>% 
+fred.data <- c(
+  "GASREGW", #"CUUR0000SETB01", "TRFVOLUSM227NFWA", 
+  "GASDESM"
+) %>% 
   lapply(\(x){
     fredr(x, frequency = "m")
   }) %>% 
@@ -76,8 +79,8 @@ fred.data <- c("GASREGW", "CUUR0000SETB01", "TRFVOLUSM227NFWA", "GASDESM") %>%
   pivot_wider(names_from = series_id, values_from = value) %>% 
   rename(
     gas.price = "GASREGW",
-    cpi.gas = "CUUR0000SETB01", 
-    miles.driven = "TRFVOLUSM227NFWA", 
+    # cpi.gas = "CUUR0000SETB01", 
+    # miles.driven = "TRFVOLUSM227NFWA", 
     diesel.price = "GASDESM"
   )
 
@@ -107,7 +110,7 @@ train <- data %>%
 
 ```
 
-However, gas and diesel prices aren't known for true forecasts and the test set must be adjusted for that. These prices will be estimated using a vector autoregression (VAR). 
+However, a true forecasts will not have gas and diesel prices available so we must adjust the test set for that. These prices will be estimated using a vector autoregression (VAR). 
 
 ```{r}
 
@@ -120,7 +123,7 @@ test.fx %>%
 
 ```
 
-Since gas and diesel prices are very difficult to forecast, we will consider a scenario forecasting approach with a low price (20th percentile), medium price (point estimate), and high price (80th percentile) scenarios. 
+Since gas and diesel prices are very difficult to forecast, we will consider a scenario forecasting approach with a low price (20th percentile), medium price (point estimate), and high price (80th percentile) scenarios. Despite actual prices being well above even the 95th percentile, the 80th percentile will be used and my knowledge of gas prices over the last 12 months shouldn't be a cause of bias. 
 
 ```{r}
 
@@ -163,41 +166,48 @@ test.high <- test_all.scenarios %>%
 
 #### Gasoline Station Sales Plots
 
-
+Gasoline station sales have been very volatile during the training set period, especially so since the COVID-19 pandemic started. The sales have been highly correlated with gas and diesel prices.
 
 ```{r}
 #| fig-height: 4
+#| eval: false
+#| echo: false
 
 train %>% 
   autoplot(sales.gas) +
-  ggtitle("Monthly Gas Station Sales in US")
+  ggtitle("Monthly Gas Station Sales in US") +
+  scale_y_continuous(labels = label_dollar())
 
 ```
 
 ```{r}
+#| fig-height: 4
 
 train %>% 
   # select(date, sales.gas, gas.price, miles.driven) %>% 
   pivot_longer(-date) %>% 
   ggplot(aes(x = date, y = value, color = name)) +
   geom_line() +
-  facet_grid(name ~ ., scales = "free")
+  facet_grid(name ~ ., scales = "free") +
+  scale_y_continuous(labels = label_dollar())
 
 ```
 
+Surprisingly, little if any seasonality exist in the series.
 
 ```{r}
 #| fig-height: 4
 
 train %>% 
   gg_season(sales.gas) +
-  ggtitle("Seasonality Plot: Monthly Gas Station Sales in US")
+  ggtitle("Seasonality Plot: Monthly Gas Station Sales in US") +
+  scale_y_continuous(labels = label_dollar())
 
 ```
 
 
 
-
+The ACF and PACF also back this up with a low correlation against the 12-month lag.
 
 ```{r}
 
@@ -209,26 +219,26 @@ train %>%
 
 #### Decomposition
 
+The STL Decomposition does appear to find some seasonal component, though it may not be statistically significant. This is especially so since it appears the large dip in March 2020, a likely result of COVID-19 shutdowns, has affected the seasonal component. The seasonal window was forced to be periodic, resulting in an unchanging seasonal pattern since only 4 years of data exist in the training set.
 
 ```{r}
 
 train %>% 
-  model(STL(sales.gas)) %>% 
+  model(STL(sales.gas ~ season(window = 'periodic'))) %>% 
   components() %>% 
-  autoplot()
+  autoplot() +
+  scale_y_continuous(labels = label_dollar())
 
 ```
 
 
 #### Correlations with Gas Station Sales
 
-
-
 ```{r}
 
 train %>% 
   pivot_longer(-c(date, sales.gas)) %>% 
-  ggplot(aes(y = log(sales.gas), x = (value), color = name)) +
+  ggplot(aes(y = (sales.gas), x = (value), color = name)) +
   geom_point() +
   facet_wrap(name ~ ., scales = "free")
 
@@ -239,7 +249,7 @@ train %>%
 
 #### Estimation
 
-
+Four models will be estimated: an ETS, an auto-ARIMA, and an ARIMAX using gas and diesel prices as regressors. The fourth model will be a simple average of the others. 
 
 ```{r}
 
@@ -248,13 +258,9 @@ train %>%
   model(
     "ets" = ETS(sales.gas),
     "arima" = ARIMA((sales.gas)),
-    "dynamic1" = ARIMA(sales.gas ~ gas.price),
-    "dynamic2" = ARIMA(sales.gas ~ cpi.gas),
-    "dynamic3" = ARIMA(sales.gas ~ diesel.price),
-    "dynamic4" = ARIMA(sales.gas ~ miles.driven),
-    "dynamic5" = ARIMA(sales.gas ~ gas.price + miles.driven + diesel.price),
-    "dynamic6" = ARIMA(sales.gas ~ gas.price + diesel.price)
-  ))
+    "dynamic" = ARIMA(sales.gas ~ gas.price + diesel.price)
+  ) %>% 
+   mutate(ensemble = (ets + arima + dynamic) / 3))
 
 
 ```
@@ -262,24 +268,29 @@ train %>%
 
 
 ```{r}
-glance(fit)
+fit %>% 
+  select(-ensemble) %>% 
+  glance()
 ```
 
 
 
 ### Forecast
 
-The models were trained on data prior to `r max(as.Date(train$date)) + months(1)`. The forecast period is the interval `r lubridate::interval(min(as.Date(test$date)), max(as.Date(test$date)))`. 
+The models were trained on data prior to `r max(as.Date(train$date)) + months(1)`. The forecast period is the interval `r lubridate::interval(min(as.Date(test$date)), max(as.Date(test$date)))`. Three forecasts are produced from each model, one from each of the three scenarios (low, medium, and high).
 
 
+#### High
+
+Given the historically high gas and diesel prices during the test set, the high scenario will most likely produce the best forecast. However, as shown below the forecast does underestimate total sales by a considerable amount.
 
 ```{r}
 
-  fx <- fit %>% 
-        forecast(test)
+fx.high <- fit %>% 
+        forecast(test.high)
   
 
-  fx %>% 
+  fx.high %>% 
     autoplot(
         # data %>% filter(year(date)>2020),
         level = NULL, size = .75, alpha = .75
@@ -288,146 +299,210 @@ The models were trained on data prior to `r max(as.Date(train$date)) + months(1)
       data %>% tsibble() %>% filter(year(date)>2020), sales.gas, 
       size = 1, alpha = .75#, linetype = "dashed"
     ) +
-    ggtitle("US Gas Station Sales Out-of-Sample Forecast") + 
+    ggtitle("US Gas Station Sales Out-of-Sample Forecast, High Scenario") + 
     scale_color_viridis_d() +
     scale_y_continuous(labels = label_dollar())
+  
+
 
 ```
 
-
+The dynamic model does produce a slightly better forecast with an RMSE of $8,624. 
 
 ```{r}
 
-fx %>% 
-  accuracy(test) %>% 
+fx.high %>% 
+  accuracy(test.high, measures = list(point_accuracy_measures, distribution_accuracy_measures)) %>% 
   arrange(RMSE)
 
 ```
 
 
+
+#### Medium
+
+The medium scenario performs very poorly because of the large deviation of actual versus medium gas/diesel prices.
+
 ```{r}
 
-fx %>% 
-  accuracy(test, measures = distribution_accuracy_measures) %>% 
-  arrange(CRPS)
+fx.med <- fit %>% 
+        forecast(test.med)
+  
+
+fx.med %>% 
+  autoplot(
+      # data %>% filter(year(date)>2020),
+      level = NULL, size = .75, alpha = .75
+    ) +
+  autolayer(
+    data %>% tsibble() %>% filter(year(date)>2020), sales.gas, 
+    size = 1, alpha = .75#, linetype = "dashed"
+  ) +
+  ggtitle("US Gas Station Sales Out-of-Sample Forecast, Medium Scenario") + 
+  scale_color_viridis_d() +
+  scale_y_continuous(labels = label_dollar())
 
 ```
 
-#### Ensemble
+The ETS model performs best by a large margin with an RMSE of $8,674. 
 
 ```{r}
 
-fx.rmse <- fx %>% 
-  accuracy(test) %>% 
-  select(.model, MAE) %>% 
-  filter(.model %in% c("ets", "arima", "dynamic1")) %>% 
-  mutate(
-    weight = 1 / MAE,
-    weight.norm = weight / sum(weight)
+fx.med %>% 
+  accuracy(test.med, measures = list(point_accuracy_measures, distribution_accuracy_measures)) %>% 
+  arrange(RMSE)
+
+```
+
+
+#### Low
+
+The low scenario is a very poor forecast. The ETS model once again does best since it does not use any exogenous regressors.
+
+```{r}
+
+fx.low <- fit %>% 
+        forecast(test.low)
+  
+
+  fx.low %>% 
+    autoplot(
+        # data %>% filter(year(date)>2020),
+        level = NULL, size = .75, alpha = .75
+      ) +
+    autolayer(
+      data %>% tsibble() %>% filter(year(date)>2020), sales.gas, 
+      size = 1, alpha = .75#, linetype = "dashed"
+    ) +
+    ggtitle("US Gas Station Sales Out-of-Sample Forecast, low Scenario") + 
+    scale_color_viridis_d() +
+    scale_y_continuous(labels = label_dollar())
+
+```
+
+```{r}
+
+fx.low %>% 
+  accuracy(test.low, measures = list(point_accuracy_measures, distribution_accuracy_measures)) %>% 
+  arrange(RMSE)
+
+```
+
+
+While averaging forecasts usually creates a better estimate, it performs poorly due to the poor models used in the evaluation.
+
+
+
+#### Bagged Forecasts
+
+Due to the uncertainty in the regressors, bagging the forecast could aid tremendously. We'll generate 20 new training sets by simulating an STL model. We'll create a new test set that combines them into one and updates the tsibble key to include these scenarios. 
+
+```{r}
+
+sales_stl <- train %>% 
+  model(STL(sales.gas))
+
+sim <- sales_stl %>% 
+  generate(new_data = train, times = 20, bootstrap_block_size = 24) %>% 
+  select(-.model, -sales.gas)
+
+test.sim <- list(
+    test.high %>% rename(.sim = sales.gas) %>% mutate(.scenario = "high") %>% as_tibble(),
+    test.med %>% rename(.sim = sales.gas) %>% mutate(.scenario = "medium") %>% as_tibble(),
+    test.low %>% rename(.sim = sales.gas) %>% mutate(.scenario = "low") %>% as_tibble()
+  ) %>% 
+  do.call(bind_rows, .) %>% 
+  cross_join(y = tibble(.rep = as.character(1:20))) %>% 
+  tsibble(key = c(.rep, .scenario))
+
+```
+
+
+Using this simulated training set, we build new models of the same type just as before. Each model type will be fit to each of the 20 training sets in turn giving $20*3=60$ different models. These models will then forecast the testing data for each scenario, resulting in $60*3=180$ different forecasts.
+
+
+```{r}
+
+sim_models <- sim %>% 
+  model(
+    ets = ETS(.sim),
+    arima = ARIMA(.sim ~ pdq(d = 1) + PDQ(D=0)),
+    dynamic = ARIMA(.sim ~ gas.price + pdq(d = 1) + PDQ(P=0, D=0, Q=0))
   )
 
- 
-fit2 <- fit %>% 
-  select(ets, arima, dynamic1) %>% 
-  mutate(
-    ensemble = ets * fx.rmse$weight.norm[3] + arima*fx.rmse$weight.norm[1] + dynamic1*fx.rmse$weight.norm[2]
-  ) 
-
-fx2 <- fit2 %>% 
-    forecast(test)
-
-```
 
 
-```{r}
+sim_forecasts <- lapply(test.sim %>% split(~.scenario), \(x){
+  sim_models %>% 
+    forecast(update_tsibble(x, key = .rep))
+}) %>% 
+  lapply(as_tibble) %>% 
+  do.call(bind_rows, .) %>% 
+  tsibble(key = c(.scenario, .rep, .model))
 
 
-  fx2 %>% 
-    autoplot(
-        # data %>% filter(year(date)>2020),
-        level = NULL, size = .75, alpha = .75
-      ) +
-    autolayer(
-      data %>% tsibble() %>% filter(year(date)>2020), sales.gas, 
-      size = 1, alpha = .75#, linetype = "dashed"
-    ) +
-    ggtitle("US Gas Station Sales Out-of-Sample Forecast") + 
-    scale_color_viridis_d() +
-    scale_y_continuous(labels = label_dollar())
-
-  fx2 %>% 
-    accuracy(test) %>% 
-    arrange(RMSE)
-  
-  fx2 %>% 
-    accuracy(test, measures = distribution_accuracy_measures) %>% 
-    arrange(CRPS)
+sim_forecasts %>% 
+  autoplot(.mean) +
+  autolayer(
+    data %>% tsibble() %>% filter(year(date)>2020), sales.gas
+  ) +
+  guides(colour = "none") +
+  labs(title = "Gasoline Station Sales: bootstrapped forecasts on low, medium, and high scenarios.")
 
 ```
 
-
-#### VAR
-
-```{r}
-
-fit.var <- train %>% 
-  model("var" = VAR(vars(sales.gas, cpi.gas)))
-
-report(fit.var)
-
-```
-
+These bootstrapped forecasts are then averaged together to create a new ensemble forecast. The below plot compares this bagged forecast against the best scenario, the high scenario. The dashed lines are the bagged forecast at the 80th percentile, mean, and 20th percentile, respectively.
 
 ```{r}
 
-fx.var <- fit.var %>% 
-  forecast(test)
+bagged <- sim_forecasts %>% 
+  summarise(
+    bagged_mean = mean(.mean),
+    bagged_median = median(.mean),
+    bagged_p80 = quantile(.mean, .8),
+    bagged_p20 = quantile(.mean, .2)
+  )
 
-fx.var %>% 
+fx.high %>% 
   autoplot(
-      data %>% filter(year(date)>2020),
-      level = NULL, size = .75, alpha = .75
-    ) 
+      data %>% tsibble() %>% filter(year(date)>2020), 
+      level = NULL,
+      size = .75, alpha = .75#, linetype = "dashed"
+  ) +
+  autolayer(bagged, bagged_mean, col = "gray30", size = 1, linetype = "dashed") +
+  autolayer(bagged, bagged_p80, col = "gray30", size = 1, linetype = "dashed") +
+  autolayer(bagged, bagged_p20, col = "gray30", size = 1, linetype = "dashed") +
+  labs(title = "Gasoline Station Sales: bootstrapped forecasts")
 
-fx.var %>% 
-  accuracy(test) %>% 
+```
+
+
+### Model Comparison
+
+The following table summarizes each of these models and scenarios:
+
+```{r}
+
+bind_rows(
+    fx.low %>% mutate(.scenario = "low") %>% as_tibble() %>% select(.scenario, .model, date, .mean),
+    fx.med %>% mutate(.scenario = "med") %>% as_tibble() %>% select(.scenario, .model, date, .mean),
+    fx.high %>% mutate(.scenario = "high") %>% as_tibble() %>% select(.scenario, .model, date, .mean),
+    bagged %>% 
+      as_tibble() %>% 
+      select(date, bagged_mean) %>% 
+      pivot_longer(-date, names_to = ".model", values_to = ".mean") %>% 
+      mutate(.scenario = "bagged")
+  ) %>% 
+  left_join(test, by = "date") %>% 
+  as_tibble() %>% 
+  group_by(.scenario, .model) %>% 
+  summarize(
+    RMSE = RMSE(.mean - sales.gas),
+    MAPE = MAPE(.mean - sales.gas, .actual = sales.gas),
+    MAE = MAE(.mean - sales.gas)
+  ) %>% 
   arrange(RMSE)
 
-fx.var %>% 
-  accuracy(test, measures = distribution_accuracy_measures) %>% 
-  arrange(CRPS)
-
 ```
 
-
-
-#### Model Statistics
-
-
-```{r}
-
-fit %>% 
-  select(dynamic1) %>% 
-  report()
-
-```
-
-
-
-```{r}
-
-fit %>% 
-  select(dynamic1) %>% 
-  gg_tsresiduals()
-
-```
-
-
-```{r}
-
-fit %>% 
-  select(dynamic1) %>% 
-  augment() %>% 
-  features(.innov, ljung_box)
-
-```
+The bagged forecast outperforms all the other forecasts, even the dynamic model in the high scenario. This is despite the high scenario dynamic model only containing the *better* data in the test set and the bagged forecast containing all low, medium, and high scenarios. A better forecast could possibly also be achieved by simulating the test set gas and diesel prices rather than using scenario forecasts. This approach would also enable us to quantify the uncertainty present in the exogenous regressors better. The first approach produces near meaningless confidence intervals, since those do not consider the uncertainty in the regressors. Simulating these variables and calculating the quantiles enables us to embed this uncertainty within the forecast. 
