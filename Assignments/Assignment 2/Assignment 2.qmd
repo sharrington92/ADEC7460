@@ -32,16 +32,16 @@ library(scales)
 
 theme_set(theme_bw())
 
-# if(!str_detect(basename(getwd()), "Time Series") & str_detect(dirname(getwd()), "Time Series")){
-#   repeat{
-#     setwd("../")
-#     if(str_detect(basename(getwd()), "Time Series")){
-#       break
-#     }
-#   }
-# } 
-# 
-# if(basename(getwd()) != "Assignment 2") setwd(file.path(getwd(), "Assignments", "Assignment 2"))
+if(!str_detect(basename(getwd()), "Time Series") & str_detect(dirname(getwd()), "Time Series")){
+  repeat{
+    setwd("../")
+    if(str_detect(basename(getwd()), "Time Series")){
+      break
+    }
+  }
+}
+
+if(basename(getwd()) != "Assignment 2") setwd(file.path(getwd(), "Assignments", "Assignment 2"))
 
 
 
