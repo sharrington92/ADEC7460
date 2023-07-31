@@ -92,14 +92,22 @@
       ungroup() %>% 
       mutate(
         cases_cumulative = cumsum(total_cases),
+        cases_365d = rollsum(total_cases, k = 52, na.pad = TRUE, fill = NA, align = "right"),
+        cases_8w = rollsum(total_cases, k = 8, na.pad = TRUE, fill = NA, align = "right"),
+        cases_26w = rollsum(total_cases, k = 26, na.pad = TRUE, fill = NA, align = "right"),
+        
         precip_365d = rollsum(precipitation_amt_mm, k = 52, na.pad = TRUE, fill = NA, align = "right"),
         precip_4w = rollsum(precipitation_amt_mm, k = 4*7, na.pad = TRUE, fill = NA, align = "right"),
-        hdd_station = pmax(station_avg_temp_c - 18, 0),
+        
+        hdd_station = pmin(pmax(station_avg_temp_c - 10, 0), 34-10),
         hdd_station_365d = rollsum(hdd_station, k = 52, na.pad = TRUE, fill = NA, align = "right"),
-        hdd_station_4w = rollsum(hdd_station, k = 4*7, na.pad = TRUE, fill = NA, align = "right"),
+        hdd_station_4w = rollsum(hdd_station, k = 4, na.pad = TRUE, fill = NA, align = "right"),
         hdd_reanalysis = pmax(reanalysis_avg_temp_k - 18, 0),
         hdd_reanalysis_365d = rollsum(hdd_reanalysis, k = 52, na.pad = TRUE, fill = NA, align = "right"),
-        hdd_reanalysis_4w = rollsum(hdd_reanalysis, k = 4*7, na.pad = TRUE, fill = NA, align = "right")
+        hdd_reanalysis_4w = rollsum(hdd_reanalysis, k = 4, na.pad = TRUE, fill = NA, align = "right"),
+        
+        humidity_rel_avg_4w = rollmean(reanalysis_relative_humidity_percent, k = 4, na.pad = TRUE, fill = NA, align = "right"),
+        humidity_rel_avg_2w = rollmean(reanalysis_relative_humidity_percent, k = 2, na.pad = TRUE, fill = NA, align = "right"),
       )
   }
   
@@ -170,86 +178,112 @@
     filter(weekofyear==1) %>% 
     as_tibble() %>% 
     select(year, city)
+  
+  lambda.iq <- train %>% 
+    filter(city == "iq") %>% 
+    features(total_cases, features = guerrero) %>% 
+    pull(lambda_guerrero)
+  
+  lambda.sj <- train %>% 
+    filter(city == "sj") %>% 
+    features(total_cases, features = guerrero) %>% 
+    pull(lambda_guerrero)
 }
 
 
 # Visualizations ----
 {
-  ## Cases ----
+  ## Univariate ----
   {
-    # Time plot
+    # Cases
     {
-      train %>% 
-        autoplot(box_cox(total_cases, .25))
+      # Time plot
+      {
+        train %>% 
+          autoplot(box_cox(total_cases, 1))
+        
+        train %>% 
+          autoplot(box_cox(cases_ytd, 1))
+      }
       
-      train %>% 
-        autoplot(box_cox(cases_ytd, 1))
-    }
-    
-    # Seasonality
-    {
-      train %>% 
-        gg_season(box_cox(total_cases,1)) +
-        scale_y_continuous(trans = "log10")
+      # Seasonality
+      {
+        train %>% 
+          gg_season(box_cox(total_cases,1)) +
+          scale_y_continuous(trans = "log10")
+        
+        train %>% 
+          gg_season(box_cox(cases_ytd, 1)) +
+          scale_y_continuous(trans = "log10")
+        
+        
+        train %>% 
+          inner_join(years_with_bgn, by = c("city", "year")) %>% 
+          # gg_season(cases_ytd)
+          gg_season(box_cox(cases_ytd, .25))
+      }
       
-      train %>% 
-        gg_season(box_cox(cases_ytd, 1)) +
-        scale_y_continuous(trans = "log10")
+      # Autocorrelation
+      {
+        train %>% 
+          filter(city == "iq") %>% 
+          gg_tsdisplay(
+            total_cases,
+            # difference(box_cox(total_cases, 1)),
+            # difference(total_cases, 52),
+            # difference(total_cases, 52) %>% difference(),
+            plot_type = "partial", lag_max = 104
+          )
+        
+        
+        train %>% 
+          filter(city == "iq") %>% 
+          gg_tsdisplay(
+            # box_cox(cases_cumulative, .75),
+            difference(box_cox(cases_cumulative, .75)),
+            # difference(box_cox(cases_cumulative, .75), 52),
+            # difference(box_cox(cases_cumulative, .75), 52) %>% difference(),
+            plot_type = "partial", lag_max = 104
+          )
+      }
       
       
+      
+      # Lag
       train %>% 
-        inner_join(years_with_bgn, by = c("city", "year")) %>% 
-        # gg_season(cases_ytd)
-        gg_season(box_cox(cases_ytd, .25))
-    }
-    
-    # Autocorrelation
-    {
+        features(cases_cumulative, guerrero)
+      
+      # Density
       train %>% 
         filter(city == "iq") %>% 
-        gg_tsdisplay(
-          total_cases,
-          # difference(box_cox(total_cases, 1)),
-          # difference(total_cases, 52),
-          # difference(total_cases, 52) %>% difference(),
-          plot_type = "partial", lag_max = 104
-        )
+        mutate(
+          total_cases = box_cox(total_cases, .151),
+          total_cases = difference(total_cases, 1)
+        ) %>% 
+        ggplot(aes(x = total_cases)) +
+        # geom_histogram() +
+        geom_density(color = "red3")
       
       
+      # Decomp
       train %>% 
-        filter(city == "iq") %>% 
-        gg_tsdisplay(
-          # box_cox(cases_cumulative, .75),
-          difference(box_cox(cases_cumulative, .75)),
-          # difference(box_cox(cases_cumulative, .75), 52),
-          # difference(box_cox(cases_cumulative, .75), 52) %>% difference(),
-          plot_type = "partial", lag_max = 104
-        )
+        model(STL(box_cox(total_cases, .25))) %>% 
+        components() %>% 
+        autoplot()
     }
     
     
-    
-    # Lag
-    train %>% 
-      features(cases_cumulative, guerrero)
-    
-    # Density
-    train %>% 
-      filter(city == "iq") %>% 
-      mutate(
-        total_cases = box_cox(total_cases, .151),
-        total_cases = difference(total_cases, 1)
-      ) %>% 
-      ggplot(aes(x = total_cases)) +
-      # geom_histogram() +
-      geom_density(color = "red3")
-    
-    
-    # Decomp
-    train %>% 
-      model(STL(box_cox(total_cases, .25))) %>% 
-      components() %>% 
-      autoplot()
+    # Regressors
+    {
+      train %>% 
+        autoplot(reanalysis_relative_humidity_percent)
+      
+      train %>% 
+        autoplot(reanalysis_specific_humidity_g_per_kg)
+      
+      train %>% 
+        autoplot(ndvi_ne)
+    }
   }
   
   # Bivariate ----
@@ -287,6 +321,26 @@
       theme(
         legend.position = "none"
       )
+  }
+  
+  
+  # Multivariate ----
+  {
+    train %>% 
+      mutate(
+        cases_365d_cut = cut_number(cases_365d, n = 4),
+        precip_4w_cut = cut_number(precip_4w, n = 5),
+        humidity_rel_avg_4w_cut = cut_number(humidity_rel_avg_4w, n = 4),
+        hdd_reanalysis_4w_cut = cut_number(hdd_reanalysis_4w, n = 4),
+        hdd_station_4w_cut = cut_number(hdd_station_4w, n = 6)
+      ) %>% 
+      ggplot(aes(
+        x = lag(humidity_rel_avg_4w, n = 3), y = lag(hdd_station_4w, n = 3), 
+        color = (total_cases), alpha = (total_cases)
+      )) +
+      geom_point() +
+      facet_grid(hdd_station_4w_cut ~ city, scales = "free") +
+      scale_color_viridis_c()
   }
 }
 
@@ -391,10 +445,7 @@
     {
       # Combined
       {
-        lambda.iq <- train %>% 
-          filter(city == "iq") %>% 
-          features(total_cases, features = guerrero) %>% 
-          pull(lambda_guerrero)
+        
         
         
         (fit.iq <- train %>% 
