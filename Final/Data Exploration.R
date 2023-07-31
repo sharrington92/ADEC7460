@@ -90,11 +90,21 @@
         
       ) %>% 
       ungroup() %>% 
-      mutate(cases_cumulative = cumsum(total_cases))
+      mutate(
+        cases_cumulative = cumsum(total_cases),
+        precip_365d = rollsum(precipitation_amt_mm, k = 52, na.pad = TRUE, fill = NA, align = "right"),
+        precip_4w = rollsum(precipitation_amt_mm, k = 4*7, na.pad = TRUE, fill = NA, align = "right"),
+        hdd_station = pmax(station_avg_temp_c - 18, 0),
+        hdd_station_365d = rollsum(hdd_station, k = 52, na.pad = TRUE, fill = NA, align = "right"),
+        hdd_station_4w = rollsum(hdd_station, k = 4*7, na.pad = TRUE, fill = NA, align = "right"),
+        hdd_reanalysis = pmax(reanalysis_avg_temp_k - 18, 0),
+        hdd_reanalysis_365d = rollsum(hdd_reanalysis, k = 52, na.pad = TRUE, fill = NA, align = "right"),
+        hdd_reanalysis_4w = rollsum(hdd_reanalysis, k = 4*7, na.pad = TRUE, fill = NA, align = "right")
+      )
   }
   
   
-  # PCA
+  # PCA ----
   {
     train.all.done[,setdiff(vars.fact, "total_cases")] %>% 
       prcomp()
@@ -253,20 +263,30 @@
     train %>% 
       filter(city == "iq") %>% 
       mutate(
-        total_cases = difference(total_cases),
+        # total_cases = difference(total_cases),
         across(
-          -c(city, year, weekofyear, week_start_date, yearweak, total_cases), 
+          -c(city, year, weekofyear, week_start_date, yearweek, total_cases, is_missing),
           # difference
           # \(x){log(x) %>% difference()}
-          \(x){lag(x, 1) %>% difference()}
+          # \(x){lag(x, 1) %>% difference()}
+          \(x){lag(x, 4)}
         )
-      ) %>% 
+      ) %>%
       as_tibble() %>% 
-      select(-c(city, year, weekofyear, week_start_date, yearweak)) %>% #filter(!is.na(total_cases)) %>% cor(use = 'complete.obs')
+      select(-c(
+        city, year, weekofyear, week_start_date, yearweek, is_missing, 
+        cases_cumulative, 
+        cases_ytd
+        # total_cases
+      )) %>% #filter(!is.na(total_cases)) %>% cor(use = 'complete.obs')
       pivot_longer(-total_cases) %>% 
-      ggplot(aes(x = value, y = total_cases, color = name)) +
+      ggplot(aes(x = box_cox(value, 2), y = box_cox(total_cases, .5), color = name)) +
       geom_point() +
-      facet_wrap(name ~ ., scales = "free")
+      geom_smooth(method = "lm", color = "gray50") +
+      facet_wrap(name ~ ., scales = "free") +
+      theme(
+        legend.position = "none"
+      )
   }
 }
 
@@ -367,7 +387,7 @@
     }
     
     
-    # IQ ----
+    ## IQ ----
     {
       # Combined
       {
@@ -381,8 +401,10 @@
            filter(city == "iq") %>% 
            model(
              "arima1" = ARIMA(box_cox(total_cases, lambda.iq)),
-             "harmonic" = ARIMA(
-               box_cox(total_cases, lambda.iq) ~ PDQ(0, 0, 0) + fourier(K = 4) + station_max_temp_c
+             "harmonic1" = ARIMA(box_cox(total_cases, lambda.iq) ~ PDQ(0, 0, 0) + fourier(K = 4)),
+             "harmonic2" = ARIMA(
+               box_cox(total_cases, lambda.iq) ~ PDQ(0, 0, 0) + fourier(K = 4) 
+               + hdd_reanalysis_4w + precip_365d + precip_4w
              )
            ))
         
@@ -405,7 +427,7 @@
         # Find Correlations with residuals
         {
           train.with.resid <- fit.iq %>% 
-            select(harmonic) %>% 
+            select(harmonic1) %>% 
             augment() %>% 
             select(yearweek, .resid, .innov) %>% 
             left_join(y = train %>% filter(city == "iq"))
@@ -419,26 +441,28 @@
             autoplot()
           
           train.with.resid %>% 
-            # mutate(
-            #   total_cases = difference(total_cases),
-            #   across(
-            #     -c(city, year, weekofyear, week_start_date, yearweak, total_cases), 
-            #     # difference
-            #     # \(x){log(x) %>% difference()}
-            #     \(x){lag(x, 1) %>% difference()}
-            #   )
-            # ) %>% 
+            mutate(
+              # total_cases = difference(total_cases),
+              across(
+                -c(city, year, weekofyear, week_start_date, yearweek, total_cases),
+                # difference
+                # \(x){log(x) %>% difference()}
+                \(x){lag(x, 4)}
+                # \(x){lag(x, 1) %>% difference()}
+              )
+            ) %>%
             as_tibble() %>% 
             select(-c(
               city, year, weekofyear, week_start_date, yearweek, is_missing, total_cases, cases_ytd, cases_cumulative,
-              .resid,
-              # .innov
+              # .resid,
+              .innov
             )) %>% 
             # filter(!is.na(total_cases)) %>% 
             # cor(use = 'complete.obs')
-            pivot_longer(-.innov) %>% 
-            ggplot(aes(x = log(value), y = .innov, color = name)) +
+            pivot_longer(-.resid) %>% 
+            ggplot(aes(x = (value), y = .resid, color = name)) +
             geom_point() +
+            geom_smooth(method = "lm", color = "gray50") +
             facet_wrap(name ~ ., scales = "free") +
             theme(legend.position = "none")
           
