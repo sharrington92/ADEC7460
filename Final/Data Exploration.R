@@ -87,10 +87,11 @@
       group_by(year, city) %>% 
       mutate(
         cases_ytd = cumsum(total_cases)
-        
       ) %>% 
       ungroup() %>% 
+      group_by(city) %>% 
       mutate(
+        total_cases_scaled = scale(total_cases),
         cases_cumulative = cumsum(total_cases),
         cases_365d = rollsum(total_cases, k = 52, na.pad = TRUE, fill = NA, align = "right"),
         cases_8w = rollsum(total_cases, k = 8, na.pad = TRUE, fill = NA, align = "right"),
@@ -200,7 +201,7 @@
       # Time plot
       {
         train %>% 
-          autoplot(box_cox(total_cases, 1))
+          autoplot(box_cox(total_cases_scaled, 1))
         
         train %>% 
           autoplot(box_cox(cases_ytd, 1))
@@ -335,8 +336,8 @@
         hdd_station_4w_cut = cut_number(hdd_station_4w, n = 6)
       ) %>% 
       ggplot(aes(
-        x = lag(humidity_rel_avg_4w, n = 3), y = lag(hdd_station_4w, n = 3), 
-        color = (total_cases), alpha = (total_cases)
+        x = lag(humidity_rel_avg_2w, n = 3), y = lag(hdd_station_4w, n = 3), 
+        color = (total_cases_scaled), alpha = (total_cases_scaled)
       )) +
       geom_point() +
       facet_grid(hdd_station_4w_cut ~ city, scales = "free") +
