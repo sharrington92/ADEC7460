@@ -439,8 +439,17 @@ sim_models <- sim %>%
     # dynamic2 = ARIMA(.sim ~ gas.price + diesel.price + pdq(d = 1) + PDQ(D=0))
   )
 
+sim_forecasts <- lapply(test.sim %>% split(~.scenario), \(x){
+  sim_models %>% 
+    forecast(update_tsibble(x, key = .rep))
+}) %>% 
+  lapply(as_tibble) %>% 
+  do.call(bind_rows, .) %>% 
+  tsibble(key = c(.scenario, .rep, .model))
+
 
 saveRDS(sim_models, "sim_models.RDS")
+saveRDS(sim_forecasts, "sim_forecasts.RDS")
 
 ```
 
@@ -451,13 +460,7 @@ sim_models <- readRDS("sim_models.RDS") %>%
   select(-dynamic2)
 
 
-sim_forecasts <- lapply(test.sim %>% split(~.scenario), \(x){
-  sim_models %>% 
-    forecast(update_tsibble(x, key = .rep))
-}) %>% 
-  lapply(as_tibble) %>% 
-  do.call(bind_rows, .) %>% 
-  tsibble(key = c(.scenario, .rep, .model))
+sim_forecasts <- readRDS("sim_forecasts.RDS")
 
 
 sim_forecasts %>% 
