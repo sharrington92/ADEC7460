@@ -1,4 +1,4 @@
-# Setup
+# Setup ----
 {
   library(tidyverse)
   library(fpp3)
@@ -6,21 +6,30 @@
   
   # https://www.drivendata.org/competitions/44/dengai-predicting-disease-spread/page/82/#features_list
   
+  if(!str_detect(basename(getwd()), "Time Series") & str_detect(dirname(getwd()), "Time Series")){
+    repeat{
+      setwd("../")
+      if(str_detect(basename(getwd()), "Time Series")){
+        break
+      }
+    }
+  }
   
+  if(basename(getwd()) != "Final") setwd(file.path(getwd(), "Final"))
   
   
   theme_set(theme_bw())
 }
 
-# Data Preparation
+# Data Preparation ----
 {
-  test <- read_csv(file.path("Final", "Data", "dengue_features_test.csv")) %>% 
+  test <- read_csv(file.path("Data", "dengue_features_test.csv")) %>% 
     mutate(week_start_date = yearweek(week_start_date)) %>% 
     tsibble(key = city, index = week_start_date)
   
-  train.all.raw <- read_csv(file.path("Final", "Data", "dengue_labels_train.csv")) %>% 
+  train.all.raw <- read_csv(file.path("Data", "dengue_labels_train.csv")) %>% 
     inner_join(
-      y = read_csv(file.path("Final", "Data", "dengue_features_train.csv")),
+      y = read_csv(file.path("Data", "dengue_features_train.csv")),
       by = c("city", "year", "weekofyear")
     ) %>% 
     mutate(yearweek = yearweek(week_start_date)) %>% 
@@ -32,7 +41,7 @@
   vars.fact <- setdiff(colnames(train.all.raw), vars.id)
   
   
-  # Missing Values
+  ## Missing Values ----
   {
     train.all.raw %>% 
       select(total_cases) %>% 
@@ -51,7 +60,7 @@
     
     
     
-    train.all2 %>% 
+    train.all %>% 
       # filter(year %in% c(2006:2006)) %>% 
       filter(week_start_date >= ymd("2006-09-01")) %>% 
       filter(week_start_date <= ymd("2007-03-01")) %>% 
@@ -72,23 +81,66 @@
     #   Need to check residuals to see if those points are outliers
   }
   
-  # Add other vars
+  # Add other vars ----
   {
     train.all.done <- train.all %>% 
       group_by(year, city) %>% 
       mutate(
         cases_ytd = cumsum(total_cases)
-        # cases_ytd = ifelse(weekofyear != 1, coalesce(lag(cases_ytd), 0) + total_cases, total_cases)
+        
       ) %>% 
-      ungroup()
+      ungroup() %>% 
+      mutate(cases_cumulative = cumsum(total_cases))
+  }
+  
+  
+  # PCA
+  {
+    train.all.done[,setdiff(vars.fact, "total_cases")] %>% 
+      prcomp()
+    
+    train.split <- train.all.done %>% 
+      # filter(city == "iq") %>% 
+      mutate(
+        across(setdiff(vars.fact, "total_cases"), \(x){difference(x, 52)})
+      ) %>% 
+      arrange(yearweek) %>% 
+      as_tibble() %>% 
+      filter(!is.na(ndvi_nw)) %>% 
+      split(~city)
+    
+    train.pca.matrix <- train.split %>% 
+      lapply(., \(x){
+        dat <- x %>% 
+          
+          select(setdiff(vars.fact, "total_cases")) %>% 
+          as.matrix()
+        
+        prcomp(dat)$x[,c(1:20)]
+      })
+    
+      train.all.pca <- bind_rows(
+          bind_cols(
+            train.split$iq, 
+            as_tibble(train.pca.matrix$iq)
+          ),
+          bind_cols(
+            train.split$sj, 
+            as_tibble(train.pca.matrix$sj)
+          )
+      ) %>% 
+        tsibble(index = yearweek, key = city)
+      
   }
   
   valid <- train.all.done %>% 
     group_by(city) %>% 
     slice_max(order_by = yearweek, prop = .2) %>% 
-    ungroup()
+    ungroup() %>% 
+    tsibble(index = yearweek, key = city)
   train <- train.all.done %>% 
-    anti_join(y = valid, by = c("city", "yearweek"))
+    anti_join(y = as_tibble(valid), by = c("city", "yearweek")) %>% 
+    tsibble(index = yearweek, key = city)
   
   
   valid %>% 
@@ -102,7 +154,7 @@
 }
 
 
-# Other Calcs
+# Other Calcs ----
 {
   years_with_bgn <- train %>% 
     filter(weekofyear==1) %>% 
@@ -111,18 +163,28 @@
 }
 
 
-# Visualizations
+# Visualizations ----
 {
-  # Cases
+  ## Cases ----
   {
     # Time plot
-    train %>% 
-      autoplot(box_cox(total_cases, .25))
+    {
+      train %>% 
+        autoplot(box_cox(total_cases, .25))
+      
+      train %>% 
+        autoplot(box_cox(cases_ytd, 1))
+    }
     
     # Seasonality
     {
       train %>% 
-        gg_season(box_cox(total_cases,0))
+        gg_season(box_cox(total_cases,1)) +
+        scale_y_continuous(trans = "log10")
+      
+      train %>% 
+        gg_season(box_cox(cases_ytd, 1)) +
+        scale_y_continuous(trans = "log10")
       
       
       train %>% 
@@ -132,18 +194,34 @@
     }
     
     # Autocorrelation
-    train %>% 
-      filter(city == "iq") %>% 
-      gg_tsdisplay(
-        total_cases,
-        # difference(total_cases, 52) %>% difference(), 
-        plot_type = "partial", lag_max = 104
-      )
+    {
+      train %>% 
+        filter(city == "iq") %>% 
+        gg_tsdisplay(
+          total_cases,
+          # difference(box_cox(total_cases, 1)),
+          # difference(total_cases, 52),
+          # difference(total_cases, 52) %>% difference(),
+          plot_type = "partial", lag_max = 104
+        )
+      
+      
+      train %>% 
+        filter(city == "iq") %>% 
+        gg_tsdisplay(
+          # box_cox(cases_cumulative, .75),
+          difference(box_cox(cases_cumulative, .75)),
+          # difference(box_cox(cases_cumulative, .75), 52),
+          # difference(box_cox(cases_cumulative, .75), 52) %>% difference(),
+          plot_type = "partial", lag_max = 104
+        )
+    }
+    
     
     
     # Lag
     train %>% 
-      features(total_cases, guerrero)
+      features(cases_cumulative, guerrero)
     
     # Density
     train %>% 
@@ -159,13 +237,12 @@
     
     # Decomp
     train %>% 
-      mutate(total_cases = na.approx(total_cases)) %>% 
-      model(STL(total_cases)) %>% 
+      model(STL(box_cox(total_cases, .25))) %>% 
       components() %>% 
       autoplot()
   }
   
-  # Bivariate
+  # Bivariate ----
   {
     train %>% 
       filter(city == "iq") %>% 
@@ -194,7 +271,7 @@
 }
 
 
-# Decomposition
+# Decomposition ----
 {
   train %>% 
     model(STL(box_cox(total_cases, .25))) %>% 
@@ -209,7 +286,7 @@
 }
 
 
-# Linear Model
+# Linear Model ----
 {
   colnames(train)
   
@@ -257,3 +334,149 @@
 }
 
 
+# Estimation ----
+{
+  ## Cases ----
+  {
+    ## Combined ----
+    {
+      (fit <- train %>% 
+         model(
+           "arima1" = ARIMA(total_cases),
+           "arima2" = ARIMA((total_cases) ~ PDQ(0, 0, 0) + fourier(K = 2)),
+           "arima3" = ARIMA((total_cases) ~ PDQ(0, 0, 0) + fourier(K = 3)),
+           "arima4" = ARIMA((total_cases) ~ PDQ(0, 0, 0) + fourier(K = 4)),
+           "arima5" = ARIMA((total_cases) ~ PDQ(0, 0, 0) + fourier(K = 5)),
+           "arima6" = ARIMA((total_cases) ~ PDQ(0, 0, 0) + fourier(K = 6))
+         ))
+      
+      glance(fit)
+      
+      fx <- fit %>% 
+        forecast(new_data = valid)
+      
+      fx %>% 
+        accuracy(valid) %>% 
+        arrange(city, RMSE)
+      
+      fx %>% 
+        autoplot(
+          train.all %>% filter(year >= 2002),
+          level = NULL
+        )
+    }
+    
+    
+    # IQ ----
+    {
+      # Combined
+      {
+        lambda.iq <- train %>% 
+          filter(city == "iq") %>% 
+          features(total_cases, features = guerrero) %>% 
+          pull(lambda_guerrero)
+        
+        
+        (fit.iq <- train %>% 
+           filter(city == "iq") %>% 
+           model(
+             "arima1" = ARIMA(box_cox(total_cases, lambda.iq)),
+             "harmonic" = ARIMA(
+               box_cox(total_cases, lambda.iq) ~ PDQ(0, 0, 0) + fourier(K = 4) + station_max_temp_c
+             )
+           ))
+        
+        glance(fit.iq)
+        
+        fx.iq <- fit.iq %>% 
+          forecast(new_data = valid)
+        
+        fx.iq %>% 
+          accuracy(valid) %>% 
+          arrange(city, RMSE)
+        
+        fx.iq %>% 
+          autoplot(
+            train.all %>% filter(year >= 2007),
+            level = NULL
+          )
+        
+        
+        # Find Correlations with residuals
+        {
+          train.with.resid <- fit.iq %>% 
+            select(harmonic) %>% 
+            augment() %>% 
+            select(yearweek, .resid, .innov) %>% 
+            left_join(y = train %>% filter(city == "iq"))
+          
+          
+          train.with.resid %>% 
+            autoplot(.innov)
+          
+          
+          train.with.resid %>% 
+            autoplot()
+          
+          train.with.resid %>% 
+            # mutate(
+            #   total_cases = difference(total_cases),
+            #   across(
+            #     -c(city, year, weekofyear, week_start_date, yearweak, total_cases), 
+            #     # difference
+            #     # \(x){log(x) %>% difference()}
+            #     \(x){lag(x, 1) %>% difference()}
+            #   )
+            # ) %>% 
+            as_tibble() %>% 
+            select(-c(
+              city, year, weekofyear, week_start_date, yearweek, is_missing, total_cases, cases_ytd, cases_cumulative,
+              .resid,
+              # .innov
+            )) %>% 
+            # filter(!is.na(total_cases)) %>% 
+            # cor(use = 'complete.obs')
+            pivot_longer(-.innov) %>% 
+            ggplot(aes(x = log(value), y = .innov, color = name)) +
+            geom_point() +
+            facet_wrap(name ~ ., scales = "free") +
+            theme(legend.position = "none")
+          
+          
+          train.with.resid %>% 
+            select(yearweek, contains("nvdi"), contains("temp"), contains("precip")) %>% 
+            pivot_longer(-yearweek) %>% 
+            ggplot(aes(x = yearweek, y = value, color = name)) +
+            geom_line() +
+            facet_wrap(name ~ ., scales = "free") +
+            theme(legend.position = "none")
+          
+          
+          # Against PCs
+          train.with.resid %>% 
+            select(
+              yearweek, city, 
+              .innov, 
+              # .resid
+            ) %>% 
+            inner_join(train.all.pca, by = c("yearweek", "city")) %>% 
+            select(
+              yearweek, city, contains("PC"),
+              .innov, 
+              # .resid
+            ) %>% 
+            pivot_longer(-c(yearweek, city, .innov)) %>% 
+            ggplot(aes(x = value, y = .innov, color = name)) +
+            geom_point() +
+            facet_wrap(name ~ ., scales = "free") +
+            theme(legend.position = "none")
+        }
+      }
+  }
+  }
+  
+  # Cases YTD
+  {
+    
+  }
+}
