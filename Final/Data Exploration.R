@@ -447,7 +447,12 @@
         ) %>% 
         pmap(., fn_plot_pca_lags)
       
-      gridExtra::grid.arrange(grobs = plots)
+      plots %>% 
+        saveRDS("pca_plots.RDS")
+      # Save each plot to a separate page in a PDF
+      pdf("pca_plots.pdf")
+      purrr::walk(plots, print)
+      dev.off()
     }
     
     
