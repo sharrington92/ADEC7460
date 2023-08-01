@@ -177,22 +177,26 @@
       }) %>% 
       reduce(., \(x, y){inner_join(x, y, by = c("yearweek", "city"))})
     
-    
-    train.all.done <- train.all.done %>% 
-      left_join(
-        y = train.all.sa %>% 
-          rename_with(.cols = -c(yearweek, city), ~paste0(.x, "_sa")),
-        by = c("yearweek", "city")
-      )
-    
   }
   
-  valid <- train.all.done %>% 
+  train.all.done_with.sa.pca <- train.all.done %>% 
+    left_join(
+      y = train.all.sa %>% 
+        rename_with(.cols = -c(yearweek, city), ~paste0(.x, "_sa")),
+      by = c("yearweek", "city")
+    ) %>% 
+    left_join(
+      y = train.all.pca %>% 
+        select(yearweek, city, contains("PC")),
+      by = c("yearweek", "city")
+    )
+  
+  valid <- train.all.done_with.sa.pca %>% 
     group_by(city) %>% 
     slice_max(order_by = yearweek, prop = .2) %>% 
     ungroup() %>% 
     tsibble(index = yearweek, key = city)
-  train <- train.all.done %>% 
+  train <- train.all.done_with.sa.pca %>% 
     anti_join(y = as_tibble(valid), by = c("city", "yearweek")) %>% 
     tsibble(index = yearweek, key = city)
   
@@ -349,8 +353,10 @@
         cases_ytd
         # total_cases
       )) %>% #filter(!is.na(total_cases)) %>% cor(use = 'complete.obs')
+      select(total_cases, contains("_sa")) %>% 
       pivot_longer(-total_cases) %>% 
-      ggplot(aes(x = box_cox(value, 2), y = box_cox(total_cases, .5), color = name)) +
+      slice_sample(prop = .25) %>% 
+      ggplot(aes(x = box_cox(value, 1), y = box_cox(total_cases, .15), color = name)) +
       geom_point() +
       geom_smooth(method = "lm", color = "gray50") +
       facet_wrap(name ~ ., scales = "free") +
@@ -363,22 +369,88 @@
   # Multivariate ----
   {
     L = 5
-    train %>% 
+    train %>%
       mutate(
-        cases_365d_cut = cut_number(cases_365d, n = 4),
-        precip_4w_cut = cut_number(precip_4w, n = 5),
-        humidity_rel_avg_4w_cut = cut_number(humidity_rel_avg_4w, n = 4),
-        hdd_reanalysis_4w_cut = cut_number(hdd_reanalysis_4w, n = 4),
-        hdd_station_4w_cut = cut_number(hdd_station_4w, n = 3)
+        cases_365d_cut = cut_number(cases_365d, n = L),
+        precip_4w_cut = cut_number(precip_4w_sa, n = L),
+        humidity_rel_avg_4w_cut = cut_number(humidity_rel_avg_4w, n = L),
+        humidity_rel_avg_2w_cut = cut_number(humidity_rel_avg_2w, n = L),
+        hdd_reanalysis_4w_cut = cut_number(hdd_reanalysis_4w_sa, n = L),
+        hdd_station_4w_cut = cut_number(hdd_station_4w, n = L)
       ) %>% 
       ggplot(aes(
-        x = lag(humidity_rel_avg_2w, n = L), 
-        y = lag(hdd_station_4w, n = L), 
+        x = lag(precip_4w_sa, n = L), 
+        y = lag(hdd_station_4w_sa, n = L), 
         color = (total_cases_scaled), alpha = (total_cases_scaled)
       )) +
       geom_point() +
-      facet_grid(lag(hdd_reanalysis_4w_cut, n = L) ~ city, scales = "free") +
+      facet_grid(lag(humidity_rel_avg_2w_cut, n = L) ~ city, scales = "free") +
       scale_color_viridis_c()
+    
+    
+    # PCA
+    {
+      L = 4
+      train %>%
+        ggplot(aes(
+          x = lag(PC2, n = L), 
+          y = lag(PC20, n = L), 
+          color = (total_cases_scaled), alpha = (total_cases_scaled)
+        )) +
+        geom_point(size = 3) +
+        scale_color_viridis_c()
+      
+      fn_plot_pca_lags <- function(pcA, pcB, L){
+        # if(is.character(pcA)){
+          pcA <- rlang::sym(pcA)
+          pcB <- rlang::sym(pcB)
+        # } else{
+        #   pcA <- rlang::ensym(pcA)
+        #   pcB <- rlang::ensym(pcB)
+        # }
+        
+        plots <- lapply(c(1:L), \(X){
+          train %>%
+            as_tibble() %>% 
+            # slice_sample(prop = .5) %>% 
+            ggplot(aes(
+              x = lag(!!pcA, n = X), 
+              y = lag(!!pcB, n = X)
+            )) +
+            geom_point(aes(
+              color = (total_cases_scaled), alpha = (total_cases_scaled), size = total_cases_scaled
+            )) +
+            facet_grid(. ~ city, scales = "free") +
+            # geom_contour(aes(z = total_cases), color = "red", size = 4) +
+            scale_color_viridis_c() +
+            ggtitle(paste0("Lag: ", X)) +
+            theme(
+              legend.position = "none"
+            )
+        })
+        
+        gridExtra::grid.arrange(grobs = plots)
+      }
+      
+      fn_plot_pca_lags("PC4", "PC12", 6) 
+      
+      plots <- expand.grid(
+        pcA = paste("PC", 1:20, sep = ""),
+        pcB = paste("PC", 1:20, sep = "")
+      ) %>% 
+        as_tibble() %>% 
+        filter(pcA != pcB) %>% 
+        # slice_sample(n = 1) %>% 
+        mutate(
+          across(contains("pc"), as.character),
+          L=6
+        ) %>% 
+        pmap(., fn_plot_pca_lags)
+      
+      gridExtra::grid.arrange(grobs = plots)
+    }
+    
+    
   }
 }
 
@@ -626,10 +698,21 @@
           # + reanalysis_min_air_temp_k
           + lag(hdd_reanalysis_4w, n = 6) #+ lag(hdd_reanalysis_4w^2, n = 4)
           + lag(humidity_rel_avg_4w, n = 6)
-          + I(hdd_reanalysis_4w * humidity_rel_avg_4w) %>% lag(n = 6)
-        ); summary(fit.glm);par(mfrow = c(2,2)); plot(fit.glm)
+          + I(hdd_reanalysis_4w_sa * humidity_rel_avg_4w_sa) %>% lag(n = 6)
+          
+          # + precip_365d
+          + station_diur_temp_rng_c_sa
+          # + station_avg_temp_c_sa %>% rollmean(k = 2, fil = NA, align = "right") #%>% lag(n = 1)
+          + reanalysis_tdtr_k_sa %>% rollmean(k = 5, fil = NA, align = "right") #%>% lag(n = 1)
+          
+          + PC1 %>% lag(n = 4)
+          + lag(PC15, n =5)
+          + lag(PC13, n = 3)
+          + lag(PC4, n = 3)*lag(PC5, n = 3)
+          
+        ); summary(fit.glm);par(mfrow = c(2,2));# plot(fit.glm)
       
-      fx.glm <- train.all.done %>% 
+      fx.glm <- train.all.done_with.sa.pca %>% 
         filter(city == "iq") %>% 
         predict(
           fit.glm, newdata = .
@@ -637,7 +720,7 @@
       
       
       
-      valid.glm.iq <- train.all.done %>%
+      valid.glm.iq <- train.all.done_with.sa.pca %>%
         filter(city == "iq") %>% 
         bind_cols(
           fitted = fx.glm
@@ -648,7 +731,7 @@
         inner_join(valid)
       
       
-      train.all.done %>% 
+      train.all.done_with.sa.pca %>% 
         filter(city == "iq") %>% 
         filter(year>=2007) %>%
         autoplot(total_cases) +
@@ -713,7 +796,7 @@
               -c(city, year, weekofyear, week_start_date, yearweek, total_cases),
               # difference
               # \(x){log(x) %>% difference()}
-              \(x){lag(x, 4)}
+              \(x){lag(x, 1)}
               # \(x){lag(x, 1) %>% difference()}
             )
           ) %>%
@@ -725,9 +808,10 @@
           )) %>% 
           # filter(!is.na(total_cases)) %>% 
           # cor(use = 'complete.obs')
+          select(resids, contains("PC")) %>% 
           pivot_longer(-resids) %>% 
           slice_sample(prop = .25) %>% 
-          ggplot(aes(x = log(value), y = resids, color = name)) +
+          ggplot(aes(x = (value), y = resids, color = name)) +
           geom_point() +
           geom_smooth(method = "lm", color = "gray50") +
           facet_wrap(name ~ ., scales = "free") +
