@@ -1,0 +1,349 @@
+---
+title: "Week 5 Discussion"
+author: "Shaun Harrington"
+format: 
+  html:
+    toc: true
+    code-fold: true
+editor_options: 
+  chunk_output_type: console
+---
+
+## Setup
+
+This week I'm regressing exogenous variables on US electricity sales. I'll be using heating and cooling degree days, which are transformations on temperature to help linearize it with electricity consumption, and a psuedo real GDP
+
+```{r}
+#| warning: false
+
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE
+)
+
+library(tidyverse)
+library(fpp3)
+library(tidyquant)
+library(scales)
+library(patchwork)
+
+theme_set(theme_bw())
+
+if(basename(getwd()) != "Week 5") setwd(file.path(getwd(), "Discussions", "Week 5"))
+
+
+```
+
+## Preliminary Analysis
+
+### Get Data
+
+I'll be considering two sectors, Technology and Healthcare, and two stocks within each sector, Vanguard IT ETF and Microsoft in Technology and Vanguard Healthcare ETF and Pfizer in Healthcare. We'll use the tidyquant package to get stock prices from Yahoo Finance. I also create a column called *value* to represent the value of a portfolio with $100 invested into each stock.
+
+```{r}
+
+stocks <- tibble(
+  stock = c("Vanguard IT ETF", "Microsoft", "Pfizer", "Vanguard Health Care ETF"),
+  symbol = c("VGT", "MSFT", "PFE", "VHT"),
+  sector = c("Technology", "Technology", "Healthcare", "Healthcare")
+)
+
+data <- tq_get(
+  stocks$symbol, 
+  from = floor_date(today() - years(5), "months") - 1, 
+  to = floor_date(today(), "months") - 1
+) %>% 
+  mutate(
+    year = year(date), 
+    month = month(date)
+  ) %>% 
+  group_by(year, month, symbol) %>% 
+  slice_max(n = 1, order_by = date) %>% 
+  ungroup() %>% 
+  select(symbol, date, adjusted) %>% 
+  left_join(y = stocks, by = "symbol") %>% 
+  rename(price = adjusted) %>% 
+  mutate(date = yearmonth(date)) %>% 
+  group_by(symbol) %>% 
+  mutate(value = price / first(price) * 100)
+
+```
+
+
+
+### Data Preparation
+
+The test set will be 2022 and the training set will be 2017 to 2021.
+
+```{r}
+
+test <- as_tibble(data) %>% 
+  group_by(symbol) %>% 
+  slice_max(order_by = date, n = 12) %>% 
+  ungroup() %>% 
+  tsibble(index = date, key = symbol) %>% 
+  aggregate_key((sector/symbol), price = mean(price), value = sum(value))
+
+train <- as_tibble(data) %>% 
+  anti_join(y = test, by = "date") %>% 
+  tsibble(index = date, key = symbol) %>% 
+  aggregate_key((sector/symbol), price = mean(price), value = sum(value))
+
+data <- data %>% 
+  tsibble(index = date, key = symbol) %>% 
+  aggregate_key((sector/symbol), price = mean(price), value = sum(value))
+
+```
+
+
+
+### Data Exploration
+
+#### Value of Portfolio Plots
+
+```{r}
+#| fig-height: 4
+
+train %>% 
+  autoplot(value) +
+  ggtitle("Monthly Closing Stock & ETF Prices")
+
+```
+
+Unsurprisingly, there does not appear to be any seasonality. If there were, an efficient market would arbitrage out the seasonality.
+
+```{r}
+#| fig-height: 6
+
+train %>% 
+  filter(!is_aggregated(symbol)) %>% 
+  gg_season(price) +
+  ggtitle("Seasonality Plot: Monthly Closing Stock & ETF Prices")
+
+```
+
+#### Autocorrelation
+
+Each stock is a random walk with drift where the price is only correlated with the previous month's price.
+
+```{r}
+#| fig-height: 4
+
+  pacf.plot <- train %>% 
+    filter(!is_aggregated(symbol)) %>% 
+    PACF(price, lag_max = 24) %>% 
+    autoplot() +
+    ggtitle("PACF")
+  
+  acf.plot <- train %>% 
+    ACF(lag_max = 24) %>% 
+    autoplot(price) +
+    ggtitle("ACF")
+  
+  acf.plot + pacf.plot
+
+```
+
+
+
+#### Decomposition
+
+
+```{r}
+
+train %>% 
+  model(STL(price)) %>% 
+  components() %>% 
+  autoplot()
+
+```
+
+
+## Modeling
+
+#### Estimation
+
+<!-- You are going to manually build a tiny mutual fund. Pick 5 years of monthly adjusted closing data for four stocks or funds from two different sectors (four stocks total, two in each sector).  Assume equal dollar amounts of all four stocks are invested.  Use the initial 4 years of data to build top-down, middle out, and bottoms-up models that predict the total value for year 5.  How well did they do? -->
+
+
+
+
+```{r}
+
+
+(fit <- train %>% 
+  model(base = ARIMA(value)) %>% 
+  reconcile(
+    bu = bottom_up(base),
+    td = top_down(base),
+    mo = middle_out(base)
+  ))
+
+
+```
+
+
+
+```{r}
+glance(fit)
+```
+
+
+
+### Forecast
+
+The models were trained on data prior to `r max(as.Date(train$date)) + months(1)`. The forecast period is the interval `r lubridate::interval(min(as.Date(test$date)), max(as.Date(test$date)))`. 
+
+
+
+```{r}
+
+  fx <- fit %>% 
+        forecast(test)
+  
+
+  fx %>% 
+    filter(is_aggregated(sector), is_aggregated(symbol)) %>% 
+    autoplot(
+        data %>% filter(year(date) > 2020),
+        level = NULL, 
+        size = .75, alpha = .5
+      ) +
+    ggtitle("Projected Portfolio Value versus Actual") 
+
+```
+
+
+```{r}
+
+fx %>% 
+    filter(!is_aggregated(sector)) %>%
+    autoplot(
+        data %>% filter(year(date) > 2020),
+        level = NULL, 
+        size = .75, alpha = .5
+      ) +
+    facet_wrap(sector ~ symbol, scales = "free") +
+    ggtitle("Projected Portfolio Value versus Actual") 
+
+```
+
+
+
+```{r}
+
+fx %>% 
+  accuracy(test) %>% 
+  arrange(RMSE)
+
+```
+
+```{r}
+
+fx %>% 
+  accuracy(test) %>% 
+  filter(!is_aggregated(symbol)) %>% 
+  ggplot(aes(x = symbol, y = `RMSE`)) +
+  geom_col() +
+  facet_grid(.model ~ ., scales = "free")
+
+```
+
+
+```{r}
+
+fx %>% 
+  accuracy(test, measures = distribution_accuracy_measures) %>% 
+  arrange(CRPS)
+
+```
+
+
+
+#### Model Statistics
+
+*arimax3* is the model where sales are log transformed but not the regressors;  it has both an ordinary and seasonal difference. The coefficients in this model roughly translate to, "a unit increase to X results in a \beta % increase to electricity sales."
+
+```{r}
+
+fit %>% 
+  select(arimax3) %>% 
+  report()
+
+```
+
+The residuals appear to be white noise which is confirmed with the Ljung-Box test. 
+
+```{r}
+
+fit %>% 
+  select(arimax3) %>% 
+  gg_tsresiduals()
+
+```
+
+
+```{r}
+
+fit %>% 
+  select(arimax3) %>% 
+  augment() %>% 
+  features(.innov, ljung_box)
+
+```
+
+
+
+### Actual Forecast
+
+Since HDD and CDD aren't actually known the above forecast underestimates the forecast error, a true forecast will not know the future values of CDD and HDD. 
+
+```{r}
+
+test.with.unknown <- test %>% 
+  rename(hdd.actual = hdd, cdd.actual = cdd) %>% 
+  mutate(month = month(date)) %>% 
+  left_join(
+    y = train %>% 
+      as_tibble() %>% 
+      filter(year(date) >= 2010) %>% 
+      mutate(month = month(date)) %>% 
+      group_by(month) %>% 
+      summarize(across(c(hdd, cdd), mean)) %>% 
+      ungroup(),
+    by = "month"
+  )
+
+```
+
+
+```{r}
+
+  fx.true <- fit %>% 
+        forecast(test.with.unknown)
+  
+
+  fx.true %>% 
+    autoplot(
+        # data %>% filter(year(date)>2020),
+        level = NULL,
+        size = .75, alpha = .75
+      ) +
+    autolayer(
+      data %>% tsibble() %>% filter(year(date)>2020), price, 
+      size = 1, alpha = .75#, linetype = "dashed"
+    ) +
+    ggtitle("US Gigawatt-hour Electricity Sales Out-of-Sample Forecast") + 
+    scale_color_viridis_d()
+
+```
+
+
+```{r}
+
+fx.true %>% 
+  accuracy(test.with.unknown)
+
+```
+
