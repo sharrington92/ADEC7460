@@ -109,7 +109,8 @@
         
         humidity_rel_avg_4w = rollmean(reanalysis_relative_humidity_percent, k = 4, na.pad = TRUE, fill = NA, align = "right"),
         humidity_rel_avg_2w = rollmean(reanalysis_relative_humidity_percent, k = 2, na.pad = TRUE, fill = NA, align = "right"),
-      )
+      ) %>% 
+      ungroup()
   }
   
   
@@ -150,6 +151,40 @@
       ) %>% 
         tsibble(index = yearweek, key = city)
       
+  }
+  
+  
+  # Deseasonalize ----
+  {
+    fn_deseasonalize <- function(the_data, the_column){
+      the_column_var <- rlang::ensym(the_column)
+      
+      the_data %>% 
+        filter(!is.na(!!the_column_var)) %>% 
+        model(
+          STL(!!the_column_var)
+        ) %>% 
+        components() %>% 
+        select(yearweek, city, season_adjust) %>% 
+        rename(!!the_column_var := season_adjust)
+      
+    }
+    
+    train.all.sa <- setdiff(colnames(train.all.done), c(vars.id, "is_missing", "total_cases_scaled")) %>% 
+      lapply(., \(x){
+        print(x)
+        fn_deseasonalize(train.all.done, !!x)
+      }) %>% 
+      reduce(., \(x, y){inner_join(x, y, by = c("yearweek", "city"))})
+    
+    
+    train.all.done <- train.all.done %>% 
+      left_join(
+        y = train.all.sa %>% 
+          rename_with(.cols = -c(yearweek, city), ~paste0(.x, "_sa")),
+        by = c("yearweek", "city")
+      )
+    
   }
   
   valid <- train.all.done %>% 
@@ -327,20 +362,22 @@
   
   # Multivariate ----
   {
+    L = 5
     train %>% 
       mutate(
         cases_365d_cut = cut_number(cases_365d, n = 4),
         precip_4w_cut = cut_number(precip_4w, n = 5),
         humidity_rel_avg_4w_cut = cut_number(humidity_rel_avg_4w, n = 4),
         hdd_reanalysis_4w_cut = cut_number(hdd_reanalysis_4w, n = 4),
-        hdd_station_4w_cut = cut_number(hdd_station_4w, n = 6)
+        hdd_station_4w_cut = cut_number(hdd_station_4w, n = 3)
       ) %>% 
       ggplot(aes(
-        x = lag(humidity_rel_avg_2w, n = 3), y = lag(hdd_station_4w, n = 3), 
+        x = lag(humidity_rel_avg_2w, n = L), 
+        y = lag(hdd_station_4w, n = L), 
         color = (total_cases_scaled), alpha = (total_cases_scaled)
       )) +
       geom_point() +
-      facet_grid(hdd_station_4w_cut ~ city, scales = "free") +
+      facet_grid(lag(hdd_reanalysis_4w_cut, n = L) ~ city, scales = "free") +
       scale_color_viridis_c()
   }
 }
