@@ -127,20 +127,20 @@ train %>%
 Each stock is a random walk with drift where the price is only correlated with the previous month's price.
 
 ```{r}
-#| fig-height: 4
 
-  pacf.plot <- train %>% 
+ full_join(
+   train %>% 
     filter(!is_aggregated(symbol)) %>% 
-    PACF(price, lag_max = 24) %>% 
-    autoplot() +
-    ggtitle("PACF")
-  
-  acf.plot <- train %>% 
-    ACF(lag_max = 24) %>% 
-    autoplot(price) +
-    ggtitle("ACF")
-  
-  acf.plot + pacf.plot
+    PACF(price, lag_max = 24),
+  train %>% 
+    filter(!is_aggregated(symbol)) %>% 
+    ACF(lag_max = 24)
+ ) %>% 
+  as_tibble() %>% 
+  pivot_longer(-c(sector, symbol, lag)) %>% 
+  ggplot(aes(x = lag, y = value)) +
+  geom_col() +
+  facet_grid(format(symbol) ~ name)
 
 ```
 
@@ -185,6 +185,10 @@ train %>%
 
 
 ```{r}
+#| eval: false
+#| echo: false
+
+
 glance(fit)
 ```
 
@@ -194,7 +198,7 @@ glance(fit)
 
 The models were trained on data prior to `r max(as.Date(train$date)) + months(1)`. The forecast period is the interval `r lubridate::interval(min(as.Date(test$date)), max(as.Date(test$date)))`. 
 
-
+If I had invested \$100 in each of these four stocks 5 years ago and projected the portfolio value during the fifth year, I'd be below the 2021 peak but well above the \$400 I started with. While the projected current values are not far from actual, that feels mostly like luck. I don't think I'd be very close if the training set ended around the time of the all time peak in 2021.
 
 ```{r}
 
@@ -205,14 +209,16 @@ The models were trained on data prior to `r max(as.Date(train$date)) + months(1)
   fx %>% 
     filter(is_aggregated(sector), is_aggregated(symbol)) %>% 
     autoplot(
-        data %>% filter(year(date) > 2020),
+        data, # %>% filter(year(date) > 2020),
         level = NULL, 
         size = .75, alpha = .5
       ) +
-    ggtitle("Projected Portfolio Value Versus Actual") 
+    ggtitle("Projected Portfolio Value Versus Actual") +
+    scale_y_continuous(labels = label_dollar())
 
 ```
 
+Breaking it out by stock and by sector we see that some were decently close, like MSFT, while others were far off like PFE.
 
 ```{r}
 
@@ -228,35 +234,25 @@ fx %>%
 
 ```
 
+The below chart shows how each stock, sector aggregate, and total portfolio forecast performed under each model. The bottom-up approach worked best for every prediction except the VGT ETF, and the difference there is likely not significant. Surprisingly, this approach also had the lowest prediction error on the total portfolio by a decent margin. The middle-out had the largest RMSE for every prediction which is also slightly surprising. 
 
-
-```{r}
-
-fx %>% 
-  accuracy(test) %>% 
-  arrange(RMSE)
-
-```
 
 
 ```{r}
 
-temp <- fx %>% 
+fx.accuracy <- fx %>% 
   accuracy(test) %>% 
   mutate(is_agg = is_aggregated(symbol)) #%>% 
   # filter(!is_aggregated(symbol)) %>% 
 
 
-temp %>% 
+fx.accuracy %>% 
+  filter(.model != "base") %>% 
   ggplot(aes(y = interaction(format(sector), format(symbol)), x = `RMSE`)) +
   geom_col(
     aes(fill = interaction(format(sector), format(symbol))), 
     color = "black", position = position_dodge()
   ) +
-  # geom_label(aes(
-  #   label = RMSE %>% round(., digits = 1), 
-  #   x = RMSE / 2
-  # ), position = position_dodge(), size = 3) +
   geom_text(aes(
     label = RMSE %>% round(., digits = 1), 
     x = RMSE
@@ -266,7 +262,10 @@ temp %>%
     format(.model) ~ ., scales = "free_y",
     space = "free_y"
   ) +
-  scale_fill_viridis_d(option = "H")
+  scale_fill_viridis_d(option = "H") +
+  theme(
+    legend.position = "none"
+  )
 
 ```
 
