@@ -11,7 +11,6 @@ editor_options:
 
 ## Setup
 
-This week I'm regressing exogenous variables on US electricity sales. I'll be using heating and cooling degree days, which are transformations on temperature to help linearize it with electricity consumption, and a psuedo real GDP
 
 ```{r}
 #| warning: false
@@ -74,7 +73,7 @@ data <- tq_get(
 
 ### Data Preparation
 
-The test set will be 2022 and the training set will be 2017 to 2021.
+The test set will be the latest 12 months and the training set will be the prior four years.
 
 ```{r}
 
@@ -210,7 +209,7 @@ The models were trained on data prior to `r max(as.Date(train$date)) + months(1)
         level = NULL, 
         size = .75, alpha = .5
       ) +
-    ggtitle("Projected Portfolio Value versus Actual") 
+    ggtitle("Projected Portfolio Value Versus Actual") 
 
 ```
 
@@ -220,12 +219,12 @@ The models were trained on data prior to `r max(as.Date(train$date)) + months(1)
 fx %>% 
     filter(!is_aggregated(sector)) %>%
     autoplot(
-        data %>% filter(year(date) > 2020),
+        data %>% filter(year(date) >= 2020),
         level = NULL, 
         size = .75, alpha = .5
       ) +
     facet_wrap(sector ~ symbol, scales = "free") +
-    ggtitle("Projected Portfolio Value versus Actual") 
+    ggtitle("Projected Portfolio Value Versus Actual, segmented") 
 
 ```
 
@@ -239,111 +238,36 @@ fx %>%
 
 ```
 
+
 ```{r}
 
-fx %>% 
+temp <- fx %>% 
   accuracy(test) %>% 
-  filter(!is_aggregated(symbol)) %>% 
-  ggplot(aes(x = symbol, y = `RMSE`)) +
-  geom_col() +
-  facet_grid(.model ~ ., scales = "free")
+  mutate(is_agg = is_aggregated(symbol)) #%>% 
+  # filter(!is_aggregated(symbol)) %>% 
+
+
+temp %>% 
+  ggplot(aes(y = interaction(format(sector), format(symbol)), x = `RMSE`)) +
+  geom_col(
+    aes(fill = interaction(format(sector), format(symbol))), 
+    color = "black", position = position_dodge()
+  ) +
+  # geom_label(aes(
+  #   label = RMSE %>% round(., digits = 1), 
+  #   x = RMSE / 2
+  # ), position = position_dodge(), size = 3) +
+  geom_text(aes(
+    label = RMSE %>% round(., digits = 1), 
+    x = RMSE
+  ), 
+  size = 3, hjust = 0, nudge_x = .5) +
+  facet_grid(
+    format(.model) ~ ., scales = "free_y",
+    space = "free_y"
+  ) +
+  scale_fill_viridis_d(option = "H")
 
 ```
 
-
-```{r}
-
-fx %>% 
-  accuracy(test, measures = distribution_accuracy_measures) %>% 
-  arrange(CRPS)
-
-```
-
-
-
-#### Model Statistics
-
-*arimax3* is the model where sales are log transformed but not the regressors;  it has both an ordinary and seasonal difference. The coefficients in this model roughly translate to, "a unit increase to X results in a \beta % increase to electricity sales."
-
-```{r}
-
-fit %>% 
-  select(arimax3) %>% 
-  report()
-
-```
-
-The residuals appear to be white noise which is confirmed with the Ljung-Box test. 
-
-```{r}
-
-fit %>% 
-  select(arimax3) %>% 
-  gg_tsresiduals()
-
-```
-
-
-```{r}
-
-fit %>% 
-  select(arimax3) %>% 
-  augment() %>% 
-  features(.innov, ljung_box)
-
-```
-
-
-
-### Actual Forecast
-
-Since HDD and CDD aren't actually known the above forecast underestimates the forecast error, a true forecast will not know the future values of CDD and HDD. 
-
-```{r}
-
-test.with.unknown <- test %>% 
-  rename(hdd.actual = hdd, cdd.actual = cdd) %>% 
-  mutate(month = month(date)) %>% 
-  left_join(
-    y = train %>% 
-      as_tibble() %>% 
-      filter(year(date) >= 2010) %>% 
-      mutate(month = month(date)) %>% 
-      group_by(month) %>% 
-      summarize(across(c(hdd, cdd), mean)) %>% 
-      ungroup(),
-    by = "month"
-  )
-
-```
-
-
-```{r}
-
-  fx.true <- fit %>% 
-        forecast(test.with.unknown)
-  
-
-  fx.true %>% 
-    autoplot(
-        # data %>% filter(year(date)>2020),
-        level = NULL,
-        size = .75, alpha = .75
-      ) +
-    autolayer(
-      data %>% tsibble() %>% filter(year(date)>2020), price, 
-      size = 1, alpha = .75#, linetype = "dashed"
-    ) +
-    ggtitle("US Gigawatt-hour Electricity Sales Out-of-Sample Forecast") + 
-    scale_color_viridis_d()
-
-```
-
-
-```{r}
-
-fx.true %>% 
-  accuracy(test.with.unknown)
-
-```
 
