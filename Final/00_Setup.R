@@ -37,6 +37,15 @@
     tsibble(key = city, index = yearweek) %>% 
     fill_gaps() %>% 
     relocate(yearweek, everything())
+  
+  
+  other.data.list <- list.files(file.path("Data", "Additional"), pattern = "csv", full.names = T) %>% 
+    lapply(., read_csv)
+  
+  names(other.data.list) <- list.files(file.path("Data", "Additional"), pattern = "csv", full.names = F)
+  
+  
+  
 }
 
 
@@ -121,7 +130,57 @@
       ) %>% 
       ungroup()
     
+    
+    bind_rows(
+      other.data.list$Iquitos_Population_Data.csv %>% 
+        mutate(city = "iq"),
+      other.data.list$San_Juan_Population_Data.csv %>% 
+        mutate(city = "sj")
+    ) %>% #group_by(city) #%>% summarize(min(Year))
+      mutate(
+        week_start_date = paste(Year, 1, 1, sep = "-") %>% 
+          ymd %>% 
+          floor_date(unit = "weeks")
+      ) %>% 
+      complete(
+        week_start_date = seq.Date(from = ymd("1990-1-7"), to = ymd("2015-1-5"), by = "1 week"),
+        nesting(city)
+      ) %>% 
+      group_by(city) %>% 
+      mutate(
+        population = na.spline(Estimated_population),
+        week_start_date = yearweek(week_start_date)
+      ) %>% View()
+      tsibble(key = city, index = (week_start_date)) %>% 
+      autoplot(population)
+    
     rm(train.all.raw_with.miss)
+  }
+  
+  
+  # Deseasonalize ----
+  {
+    fn_deseasonalize <- function(the_data, the_column){
+      the_column_var <- rlang::ensym(the_column)
+      
+      the_data %>% 
+        filter(!is.na(!!the_column_var)) %>% 
+        model(
+          STL(!!the_column_var)
+        ) %>% 
+        components() %>% 
+        select(yearweek, city, season_adjust) %>% 
+        rename(!!the_column_var := season_adjust)
+      
+    }
+    
+    train.all.sa <- setdiff(colnames(train.all.raw_with.calcs), c(vars.id, "is_missing", "total_cases_scaled")) %>% 
+      lapply(., \(x){
+        print(x)
+        fn_deseasonalize(train.all.raw_with.calcs, !!x)
+      }) %>% 
+      reduce(., \(x, y){inner_join(x, y, by = c("yearweek", "city"))})
+    
   }
   
   
@@ -130,7 +189,7 @@
     # train.all.raw_with.calcs[,setdiff(vars.fact, "total_cases")] %>% 
     #   prcomp()
     
-    train.split <- train.all.raw_with.calcs %>% 
+    train.split <- train.all.sa %>% 
       # filter(city == "iq") %>% 
       mutate(
         across(setdiff(vars.fact, "total_cases"), \(x){difference(x, 52)})
@@ -163,32 +222,6 @@
       tsibble(index = yearweek, key = city)
     
     rm(train.pca.matrix, train.split)
-  }
-  
-  
-  # Deseasonalize ----
-  {
-    fn_deseasonalize <- function(the_data, the_column){
-      the_column_var <- rlang::ensym(the_column)
-      
-      the_data %>% 
-        filter(!is.na(!!the_column_var)) %>% 
-        model(
-          STL(!!the_column_var)
-        ) %>% 
-        components() %>% 
-        select(yearweek, city, season_adjust) %>% 
-        rename(!!the_column_var := season_adjust)
-      
-    }
-    
-    train.all.sa <- setdiff(colnames(train.all.raw_with.calcs), c(vars.id, "is_missing", "total_cases_scaled")) %>% 
-      lapply(., \(x){
-        print(x)
-        fn_deseasonalize(train.all.raw_with.calcs, !!x)
-      }) %>% 
-      reduce(., \(x, y){inner_join(x, y, by = c("yearweek", "city"))})
-    
   }
   
   
