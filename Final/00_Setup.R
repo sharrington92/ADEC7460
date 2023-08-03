@@ -131,28 +131,28 @@
       ungroup()
     
     
-    bind_rows(
-      other.data.list$Iquitos_Population_Data.csv %>% 
-        mutate(city = "iq"),
-      other.data.list$San_Juan_Population_Data.csv %>% 
-        mutate(city = "sj")
-    ) %>% #group_by(city) #%>% summarize(min(Year))
-      mutate(
-        week_start_date = paste(Year, 1, 1, sep = "-") %>% 
-          ymd %>% 
-          floor_date(unit = "weeks")
-      ) %>% 
-      complete(
-        week_start_date = seq.Date(from = ymd("1990-1-7"), to = ymd("2015-1-5"), by = "1 week"),
-        nesting(city)
-      ) %>% 
-      group_by(city) %>% 
-      mutate(
-        population = na.spline(Estimated_population),
-        week_start_date = yearweek(week_start_date)
-      ) %>% View()
-      tsibble(key = city, index = (week_start_date)) %>% 
-      autoplot(population)
+    # bind_rows(
+    #   other.data.list$Iquitos_Population_Data.csv %>% 
+    #     mutate(city = "iq"),
+    #   other.data.list$San_Juan_Population_Data.csv %>% 
+    #     mutate(city = "sj")
+    # ) %>% #group_by(city) #%>% summarize(min(Year))
+    #   mutate(
+    #     week_start_date = paste(Year, 1, 1, sep = "-") %>% 
+    #       ymd %>% 
+    #       floor_date(unit = "weeks")
+    #   ) %>% 
+    #   complete(
+    #     week_start_date = seq.Date(from = ymd("1990-1-7"), to = ymd("2015-1-5"), by = "1 week"),
+    #     nesting(city)
+    #   ) %>% 
+    #   group_by(city) %>% 
+    #   mutate(
+    #     population = na.spline(Estimated_population),
+    #     week_start_date = yearweek(week_start_date)
+    #   ) %>% View()
+    #   tsibble(key = city, index = (week_start_date)) %>% 
+    #   autoplot(population)
     
     rm(train.all.raw_with.miss)
   }
