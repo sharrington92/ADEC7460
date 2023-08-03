@@ -2,10 +2,10 @@
 {
   # https://www.drivendata.org/competitions/44/dengai-predicting-disease-spread/page/82/#features_list
   
-  if(!str_detect(basename(getwd()), "Time Series") & str_detect(dirname(getwd()), "Time Series")){
+  if(!stringr::str_detect(basename(getwd()), "Time Series") & stringr::str_detect(dirname(getwd()), "Time Series")){
     repeat{
       setwd("../")
-      if(str_detect(basename(getwd()), "Time Series")){
+      if(stringr::str_detect(basename(getwd()), "Time Series")){
         break
       }
     }
