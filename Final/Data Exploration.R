@@ -2,10 +2,10 @@
 {
   # https://www.drivendata.org/competitions/44/dengai-predicting-disease-spread/page/82/#features_list
   
-  if(!str_detect(basename(getwd()), "Time Series") & str_detect(dirname(getwd()), "Time Series")){
+  if(!stringr::str_detect(basename(getwd()), "Time Series") & stringr::str_detect(dirname(getwd()), "Time Series")){
     repeat{
       setwd("../")
-      if(str_detect(basename(getwd()), "Time Series")){
+      if(stringr::str_detect(basename(getwd()), "Time Series")){
         break
       }
     }
@@ -251,26 +251,65 @@
   # Time plots ----
   {
     vars.x.sa
+    vars.x.pc
     
     train %>% 
-      filter(year %in% c(1993:1996)) %>% #as_tibble() %>% View()
+      filter(year %in% c(1993:1998)) %>% #as_tibble() %>% View()
       # mutate(across(all_of(c(vars.x, vars.y)), difference)) %>%
       mutate(across(
         all_of(vars.x),
-        \(x){rollmean(x, k = 8, fill = NA, align = "right")}
+        \(x){rollmean(x, k = 15, fill = NA, align = "right")}
       )) %>% 
+      # mutate(across(all_of(c(vars.x, vars.y)), difference)) %>%
       pivot_longer(-c(all_of(vars.id)), names_to = "variable") %>% 
+      # filter(variable %in% c(
+      #   "total_cases", #"total_cases_sa", 
+      #   # "hdd_reanalysis_365d_sa", "precip_4w_sa", "precip_365d_sa",
+      #   
+      #   # "ndvi_nw_sa", "ndvi_sw_sa",
+      #   # "ndvi_ne_sa", "ndvi_se_sa"
+      #   
+      #   # "precipitation_amt_mm_sa", "reanalysis_sat_precip_amt_mm_sa",
+      #   # "reanalysis_sat_precip_amt_mm", "reanalysis_precip_amt_kg_per_m2_sa"
+      #   
+      #   # "reanalysis_air_temp_k_sa", "reanalysis_avg_temp_k_sa",
+      #   # "reanalysis_dew_point_temp_k_sa", "reanalysis_max_air_temp_k_sa",
+      #   # "reanalysis_min_air_temp_k_sa"
+      #   
+      #   "reanalysis_relative_humidity_percent_sa", "reanalysis_specific_humidity_g_per_kg_sa",
+      #   "reanalysis_tdtr_k_sa", "station_precip_mm_sa"
+      # )) %>% 
       filter(variable %in% c(
-        "total_cases", "total_cases_sa", 
-        # "hdd_reanalysis_365d_sa", "precip_4w_sa", "precip_365d_sa",
+        "total_cases", #"total_cases_sa", 
+        # "hdd_reanalysis_365d", "precip_4w", "precip_365d"
         
-        "ndvi_nw_sa", "ndvi_sw_sa",
-        "ndvi_ne_sa", "ndvi_se_sa"
+        # "ndvi_nw", "ndvi_sw",
+        # "ndvi_ne", "ndvi_se"
+        
+        # "precipitation_amt_mm", "reanalysist_precip_amt_mm",
+        # "reanalysist_precip_amt_mm", "reanalysis_precip_amt_kg_per_m2"
+        
+        # "reanalysis_air_temp_k", "reanalysis_avg_temp_k",
+        # "reanalysis_dew_point_temp_k", "reanalysis_max_air_temp_k",
+        # "reanalysis_min_air_temp_k"
+        
+        # "reanalysis_relative_humidity_percent", "reanalysis_specific_humidity_g_per_kg",
+        # "reanalysis_tdtr_k", "station_precip_mm"
+        
+        paste("PC", 1:5, sep = "")
       )) %>% 
       ggplot(aes(x = yearweek, y = value, color = variable)) + 
       geom_line() +
       geom_vline(xintercept = as.Date("1994-08-15"), linetype = "dashed", color = "gray30") +
-      facet_grid(variable ~ city, scales = "free")
+      geom_vline(xintercept = as.Date("1998-06-15"), linetype = "dashed", color = "gray30") +
+      geom_vline(
+        xintercept = seq.Date(from = as.Date("1990-07-01"), to = as.Date("2015-07-01"), by = "1 year"), 
+        linetype = "dotted", color = "red4", alpha = .15, linewidth = 1.25
+      ) +
+      facet_grid(variable ~ city, scales = "free") +
+      theme(
+        legend.position = "none"
+      )
   }
 }
 
