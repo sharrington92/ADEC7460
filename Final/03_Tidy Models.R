@@ -1,7 +1,12 @@
 # Setup ----
 {
-  library(tidymodels)
-  library(timetk)
+  require(tidymodels)
+  require(timetk)
+  require(randomForest)
+  require(xgboost)
+  require(doParallel)
+  # library(future)
+  
   
   # https://www.drivendata.org/competitions/44/dengai-predicting-disease-spread/page/82/#features_list
   
@@ -21,31 +26,40 @@
 }
 
 
-# Create recipe
+# Create recipe ----
 {
   data.recipe <- train %>% 
-    filter(city == "iq") %>% 
+    as_tibble() %>% 
+    # filter(city == "iq") %>% 
+    # filter(cases_cumulative > 0) %>%
     recipe(data = ., total_cases ~ .) %>% 
-    # step_rm(tgb.vibr.total.diff) %>% 
+    step_filter(city == "iq") %>% 
     update_role(
-      setdiff(vars.y, "total_cases"), 
+      c(setdiff(vars.y, "total_cases")), 
       new_role = "ID"
     ) %>%
     update_role(
-      setdiff(vars.id, "weekofyear"), 
+      # setdiff(vars.id, "weekofyear"), 
+      vars.id,
       new_role = "ID"
     ) %>% 
-    # step_log() %>%
-    step_center(all_numeric_predictors()) %>% 
-    step_scale(all_numeric_predictors()) %>% 
-    step_nzv() %>% 
-    # step_rm(tgb.vibr.total, ggb.vibr.total, ggb.vibr.x, ggb.vibr.y, tgb.vibr.x, tgb.vibr.y) %>%
+    # step_mutate(total_cases_bc = log(total_cases + .1527629)) %>%
+    step_center(all_numeric_predictors()) %>%
+    step_scale(all_numeric_predictors()) %>%
+    step_nzv() %>%
+    timetk::step_smooth(
+      # all_numeric_predictors(), 
+      period = 4,
+      precipitation_amt_mm, reanalysis_air_temp_k, reanalysis_avg_temp_k, 
+      reanalysis_min_air_temp_k, reanalysis_precip_amt_kg_per_m2,
+      reanalysis_max_air_temp_k, reanalysis_tdtr_k, reanalysis_relative_humidity_percent
+    ) %>% 
+    step_lag(all_numeric_predictors(), lag = 1:10) %>%
+    # step_diff(all_numeric_predictors(), lag = 52) %>%
     step_diff(all_numeric_predictors()) %>%
-    step_naomit(all_predictors()) %>% 
-    # step_BoxCox(total_cases, lambdas = lambda.iq) %>% 
     timetk::step_fourier(week_start_date, K = 4, period = 365/52) %>% 
-    step_lag(all_numeric_predictors(), lag = 1:10) %>% 
-    step_naomit(all_numeric())
+    step_naomit(all_numeric()) %>% 
+    step_corr(all_numeric_predictors(), threshold = .9)
   
   data.recipe$var_info #%>% View()
   data.recipe
@@ -54,42 +68,49 @@
 }
 
 
-# Random Forest
+# Random Forest ----
 {
   
-  # Fit and Tune
+  ## Fit and Tune ----
   {
-    model.rf <- rand_forest(mtry = tune(), trees = tune()) %>% 
-      set_engine("randomForest") %>% 
-      set_mode("regression")
+    {
+      model.rf <- rand_forest(mtry = tune(), trees = tune()) %>% 
+        set_engine("randomForest") %>% 
+        set_mode("regression")
+      
+      workflow.rf <- workflow() %>% 
+        add_model(model.rf) %>% 
+        add_recipe(
+          data.recipe %>% 
+            prep()
+        )
+    }
     
-    workflow.rf <- workflow() %>% 
-      add_model(model.rf) %>% 
-      add_recipe(
-        data.recipe %>% 
-          prep()
-      )
-    
-    # Fit
+    # Fit ----
     {
       # Set up grid for lambda/penalty
-      tuning.grid <- grid_regular(
-        mtry(range = c(7,10)), trees(range = c(100, 1000)), levels = 4
-      )
+      (tuning.grid <- grid_regular(
+        mtry(range = c(7,25)), trees(range = c(100, 500)), 
+        levels = c(3,4)
+      ))
       
-      # folds <- vfold_cv(data.train, v = 5)
-      folds <- rolling_origin(
-        as_tibble(train), cumulative = T,
-        initial = 52*5, assess = 52*2#, skip = 3000
-      )
+      # folds <- vfold_cv(data.train, v = 2)
+      (folds <- rolling_origin(
+        train %>% filter(city == "iq"), 
+        cumulative = F,
+        initial = 52*4, assess = 50, skip = 50
+      ))
       folds %>% dim()
-      doParallel::registerDoParallel()
+      
+      all_cores <- parallel::detectCores(logical = FALSE)
+      cl <- makePSOCKcluster(all_cores)
+      registerDoParallel(cl)
       
       # Tune model
       rf.tuning <- workflow.rf %>%
         tune_grid(folds, grid = tuning.grid)
       
-      /collect_notes(rf.tuning)$note[1]# %>% View()
+      collect_notes(rf.tuning)$note[1]# %>% View()
       
       # Tuning Results
       collect_metrics(rf.tuning) %>% 
@@ -206,39 +227,44 @@
 
 
 
-# Gradient Boosting
+# Gradient Boosting ----
 {
   
-  # Fit and Tune
+  ## Fit and Tune ----
   {
-    model.boost <- boost_tree(trees = tune(), tree_depth = tune(), learn_rate = .1) %>% 
-      set_engine("xgboost") %>% 
-      set_mode("regression")
+    {
+      model.boost <- boost_tree(trees = tune(), tree_depth = 1, learn_rate = tune()) %>% 
+        set_engine("xgboost") %>% 
+        set_mode("regression")
+      
+      workflow.boost <- workflow() %>% 
+        add_model(model.boost) %>% 
+        add_recipe(
+          data.recipe %>% 
+            prep()
+        )
+    }
     
-    workflow.boost <- workflow() %>% 
-      add_model(model.boost) %>% 
-      add_recipe(
-        data.recipe %>% 
-          prep()
-      )
-    
-    # Fit
+    ## Fit ----
     {
       # Set up grid for lambda/penalty
-      tuning.grid <- grid_regular(
-        # learn_rate(),
-        tree_depth(range = c(1, 2)),
-        trees(range = c(500,5000)), 
-        levels = c(2, 7)
-      )
+      (tuning.grid <- grid_regular(
+        learn_rate(range = c(-2, -.5)),
+        # tree_depth(range = c(1, 2)),
+        trees(range = c(10000,20000)), 
+        levels = c(4, 3)
+      ))
       
       # folds <- vfold_cv(data.train, v = 2)
-      folds <- rolling_origin(
-        data.train, cumulative = F,
-        initial = 1440*5, assess = 240*5, skip = 3000
-      )
+      (folds <- rolling_origin(
+        train %>% filter(city == "iq"), 
+        cumulative = F,
+        initial = 52*4, assess = 50, skip = 50
+      ))
       
-      doParallel::registerDoParallel()
+      all_cores <- parallel::detectCores(logical = FALSE)
+      cl <- makePSOCKcluster(all_cores)
+      registerDoParallel(cl)
       
       # Tune model
       tuning.boost <- workflow.boost %>%
@@ -249,18 +275,26 @@
       # Tuning Results
       collect_metrics(tuning.boost) #%>% View()
       collect_metrics(tuning.boost) %>% 
-        ggplot(aes(x = trees, y = mean, color = .metric)) +
+        filter(.metric == "rmse") %>% 
+        ggplot(aes(
+          x = trees, 
+          y = mean, 
+          # color = interaction(learn_rate, trees)
+          color = as.factor(learn_rate)
+        )) +
         geom_line() + 
         geom_point() +
+        geom_errorbar(aes(ymax = mean + std_err, ymin = mean - std_err)) +
         scale_x_log10() +
-        facet_grid(.metric ~ tree_depth, scales = "free") +
+        facet_grid(learn_rate ~ ., scales = "free") +
+        scale_y_continuous(labels = label_comma()) +
         theme_bw() +
         theme(legend.position = "bottom")
       
       
-      # Best results
-      best.param <- select_best(tuning.boost, "rmse")
-      best.param <- select_by_one_std_err(tuning.boost, "rmse")
+      ## Best results ----
+      (best.param <- select_best(tuning.boost, "rmse"))
+      (best.param <- select_by_one_std_err(tuning.boost, "rmse"))
       
       
       
@@ -268,7 +302,7 @@
   }
   
   
-  # Fit final model
+  ## Fit final model ----
   {
     # Final workflow
     wf.boost.final <- workflow.boost %>% 
@@ -276,26 +310,30 @@
     
     # Final fit
     fit.boost <- wf.boost.final %>% 
-      fit(data.train)
+      fit(train)
     
     fit.boost.orig <- extract_fit_engine(fit.boost)
     
-    xgboost::xgb.importance(model = fit.boost.orig) %>% 
-      xgboost::xgb.plot.importance()
+    xgboost::xgb.importance(model = fit.boost.orig) %>% #View()
+      xgboost::xgb.plot.importance(top_n = 20)
   }
   
   {
-    fn_model.validate.reg <- function(model, data.valid){
+    model <- fit.boost
+    data.valid <- valid
+    yvar <- "total_cases"
+    
+    fn_model.validate.reg <- function(model, data.valid, yvar){
       
       model.pred <- augment(model, data.valid)
       
-      fx.rmse <- rmse_vec(truth = model.pred$tgb.vibr.total, estimate = model.pred$.pred)
+      fx.rmse <- rmse_vec(truth = pull(model.pred[,yvar]), estimate = model.pred$.pred)
       
-      fx.rsq <- rsq_vec(truth = model.pred$tgb.vibr.total, estimate = model.pred$.pred)
+      fx.rsq <- rsq_vec(truth = pull(model.pred[,yvar]), estimate = model.pred$.pred)
       
-      fx.mape <- mape_vec(truth = model.pred$tgb.vibr.total, estimate = model.pred$.pred)
+      fx.mape <- mape_vec(truth = pull(model.pred[,yvar]), estimate = model.pred$.pred)
       
-      fx.plot <- qplot(x = model.pred$tgb.vibr.total, y = model.pred$.pred) +
+      fx.plot <- qplot(x = pull(model.pred[,yvar]), y = model.pred$.pred) +
         geom_abline(slope = 1, intercept = 0, size = .75) +
         theme_bw()
       
@@ -312,38 +350,39 @@
         return()
     }
     
-    fn_model.validate.reg(fit.boost, data.test)
+    fn_model.validate.reg(
+      fit.boost, valid %>% filter(city == "iq"),
+      "total_cases"
+    )
     
     
-    predict.test <- augment(fit.boost, new_data = data.test)
+    predict.test <- augment(
+      fit.boost, new_data = train.all
+    ) %>% 
+      inner_join(y = valid %>% select(yearweek, city), by = c("yearweek", "city"))
     
     
     
-    rmse_vec(truth = data.test$tgb.vibr.total.diff, estimate = predict.test$.pred)
     
-    rsq_vec(truth = data.test$tgb.vibr.total.diff, estimate = predict.test$.pred)
+    mae_vec(truth = valid$total_cases, estimate = predict.test$.pred)
+    rmse_vec(truth = valid$total_cases, estimate = predict.test$.pred)
     
-    mape_vec(truth = data.test$tgb.vibr.total.diff, estimate = predict.test$.pred)
+    rsq_vec(truth = valid$total_cases, estimate = predict.test$.pred)
     
-    qplot(x = data.test$tgb.vibr.total.diff, y = predict.test$.pred) +
+    mape_vec(truth = valid$total_cases, estimate = predict.test$.pred)
+    
+    qplot(x = valid$total_cases, y = predict.test$.pred) +
       geom_abline(slope = 1, intercept = 0, size = .75) +
       geom_smooth() +
       theme_bw()
     
     
-    data.test %>% 
-      mutate(
-        predicted = (predict.test$.pred) + data.test$tgb.vibr.total[1]
-      ) %>% 
-      # filter((time) %within% interval(ymd("2022-02-09", ymd("2022-02-14"))))
-      # filter(time >= ymd_h("2022-02-9 00")) %>%
-      # filter(time <= ymd_h("2022-02-15 24")) %>% 
-      ggplot(aes(x = time)) +
-      geom_line(aes(y = tgb.vibr.total)) +
-      geom_line(aes(y = predicted), color = "red", size = .5, alpha = .5) +
+    predict.test %>% 
+      ggplot(aes(x = yearweek)) +
+      geom_line(aes(y = total_cases)) +
+      geom_line(aes(y = .pred), color = "red", size = .5, alpha = .5) +
+      # scale_y_continuous(trans = "log10") +
       theme_bw()
     
-    
-    varImpPlot(rf.fit.diff)
-    
   }
+}
