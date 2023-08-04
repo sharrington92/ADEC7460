@@ -261,7 +261,7 @@
           
         ); summary(fit.glm);par(mfrow = c(2,2));# plot(fit.glm)
       
-      fx.glm <- train.all.done_with.sa.pca %>% 
+      fx.glm <- train.all %>% 
         filter(city == "iq") %>% 
         predict(
           fit.glm, newdata = .
@@ -269,7 +269,7 @@
       
       
       
-      valid.glm.iq <- train.all.done_with.sa.pca %>%
+      valid.glm.iq <- train.all %>%
         filter(city == "iq") %>% 
         bind_cols(
           fitted = fx.glm
@@ -280,7 +280,7 @@
         inner_join(valid)
       
       
-      train.all.done_with.sa.pca %>% 
+      train.all %>% 
         filter(city == "iq") %>% 
         filter(year>=2007) %>%
         autoplot(total_cases) +
