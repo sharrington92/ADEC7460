@@ -3,6 +3,7 @@
   library(tidyverse)
   library(fpp3)
   library(zoo)
+  library(tidymodels)
   
   # https://www.drivendata.org/competitions/44/dengai-predicting-disease-spread/page/82/#features_list
   
@@ -22,17 +23,59 @@
 }
 
 
+# User-defined Functions ----
+{
+  fn_model.validate.reg <- function(model, data.valid, yvar){
+    
+    model.pred <- augment(model, data.valid)
+    
+    fx.rmse <- rmse_vec(truth = pull(model.pred[,yvar]), estimate = model.pred$.pred)
+    
+    fx.rsq <- rsq_vec(truth = pull(model.pred[,yvar]), estimate = model.pred$.pred)
+    
+    fx.mape <- mape_vec(truth = pull(model.pred[,yvar]), estimate = model.pred$.pred)
+    
+    fx.plot <- qplot(x = pull(model.pred[,yvar]), y = model.pred$.pred) +
+      geom_abline(slope = 1, intercept = 0, size = .75) +
+      theme_bw()
+    
+    fx.metrics <- tibble(
+      Variable = c("rmse", "mape", "rsq"),
+      Value = c(fx.rmse, fx.mape, fx.rsq)
+    )
+    
+    list(
+      "model.pred" = model.pred,
+      "plot" = fx.plot,
+      "metrics" = fx.metrics
+    ) %>% 
+      return()
+  }
+}
+
+
 # Load Raw Data ----
 {
-  test <- read_csv(file.path("Data", "dengue_features_test.csv")) %>% 
-    mutate(week_start_date = yearweek(week_start_date)) %>% 
+  test.raw <- read_csv(file.path("Data", "dengue_features_test.csv")) %>% 
+    mutate(
+      yearweek = yearweek(week_start_date),
+      is_test = 1
+    ) %>% 
     tsibble(key = city, index = week_start_date)
   
-  train.all.raw <- read_csv(file.path("Data", "dengue_labels_train.csv")) %>% 
+  test.start <- as_tibble(test.raw) %>% 
+    group_by(city) %>% 
+    slice_min(n = 1, order_by = week_start_date) %>% 
+    select(week_start_date, city) %>% 
+    rename(test_start = week_start_date)
+  
+  data.all.raw <- read_csv(file.path("Data", "dengue_labels_train.csv")) %>% 
     inner_join(
       y = read_csv(file.path("Data", "dengue_features_train.csv")),
       by = c("city", "year", "weekofyear")
     ) %>% 
+    mutate(is_test = 0) %>% 
+    bind_rows(test.raw) %>% 
     mutate(yearweek = yearweek(week_start_date)) %>% 
     tsibble(key = city, index = yearweek) %>% 
     fill_gaps() %>% 
@@ -54,7 +97,7 @@
   
   
   vars.id <- c("yearweek", "year", "city", "weekofyear", "week_start_date")
-  vars.fact <- setdiff(colnames(train.all.raw), vars.id)
+  vars.fact <- setdiff(colnames(data.all.raw), vars.id)
   
   
   ## Missing Values ----
@@ -63,7 +106,7 @@
     #   select(total_cases) %>% 
     #   filter(is.na(total_cases))
     
-    train.all.raw_with.miss <- train.all.raw %>% 
+    data.all.raw_with.miss <- data.all.raw %>% 
       mutate(
         is_missing = coalesce(total_cases*0, 1) %>% factor,
         year = year(yearweek),
@@ -71,19 +114,20 @@
         weekofyear= week(week_start_date)
       ) %>% 
       mutate(
-        across(all_of(vars.fact), na.approx)
+        across(all_of(setdiff(vars.fact, "total_cases")), na.approx),
+        total_cases = ifelse(is_test == 0, coalesce(total_cases, 0), NA)
       )
     
     
     
-    # train.all.raw_with.miss %>% 
-    #   # filter(year %in% c(2006:2006)) %>% 
-    #   filter(week_start_date >= ymd("2006-09-01")) %>% 
-    #   filter(week_start_date <= ymd("2007-03-01")) %>% 
-    #   filter(city != "iq") %>% 
-    #   # mutate(total_cases_approx = na.approx(total_cases)) %>% 
+    # data.all.raw_with.miss %>%
+    #   # filter(year %in% c(2006:2006)) %>%
+    #   filter(week_start_date >= ymd("2006-09-01")) %>%
+    #   filter(week_start_date <= ymd("2007-03-01")) %>%
+    #   filter(city != "iq") %>%
+    #   # mutate(total_cases_approx = na.approx(total_cases)) %>%
     #   ggplot(aes(
-    #     x = yearweek, 
+    #     x = yearweek,
     #     y = coalesce(total_cases, -1),
     #     # y = total_cases_approx,
     #     # color = is_missing,
@@ -96,12 +140,12 @@
     # Will linearly approx missing values for now. 
     #   Need to check residuals to see if those points are outliers
     
-    rm(train.all.raw)
+    rm(data.all.raw)
   }
   
   # Add other vars ----
   {
-    train.all.raw_with.calcs <- train.all.raw_with.miss %>% 
+    data.all.raw_with.calcs <- data.all.raw_with.miss %>% 
       group_by(year, city) %>% 
       mutate(
         cases_ytd = cumsum(total_cases)
@@ -154,7 +198,7 @@
     #   tsibble(key = city, index = (week_start_date)) %>% 
     #   autoplot(population)
     
-    rm(train.all.raw_with.miss)
+    rm(data.all.raw_with.miss)
   }
   
   
@@ -174,10 +218,13 @@
       
     }
     
-    train.all.sa <- setdiff(colnames(train.all.raw_with.calcs), c(vars.id, "is_missing", "total_cases_scaled")) %>% 
+    data.all.sa <- setdiff(
+      colnames(data.all.raw_with.miss), 
+      c(vars.id, "is_missing", "total_cases_scaled", "total_cases", "is_test")
+    ) %>% 
       lapply(., \(x){
         print(x)
-        fn_deseasonalize(train.all.raw_with.calcs, !!x)
+        fn_deseasonalize(data.all.raw_with.miss, !!x)
       }) %>% 
       reduce(., \(x, y){inner_join(x, y, by = c("yearweek", "city"))})
     
@@ -189,7 +236,7 @@
     # train.all.raw_with.calcs[,setdiff(vars.fact, "total_cases")] %>% 
     #   prcomp()
     
-    train.split <- train.all.sa %>% 
+    data.citysplit <- data.all.sa %>% 
       # filter(city == "iq") %>% 
       mutate(
         across(setdiff(vars.fact, "total_cases"), \(x){difference(x, 52)})
@@ -199,7 +246,7 @@
       filter(!is.na(ndvi_nw)) %>% 
       split(~city)
     
-    train.pca.matrix <- train.split %>% 
+    data.pca.matrix <- data.citysplit %>% 
       lapply(., \(x){
         dat <- x %>% 
           
@@ -209,47 +256,109 @@
         prcomp(dat)$x[,c(1:20)]
       })
     
-    train.all.pca <- bind_rows(
+    data.all.pca <- bind_rows(
       bind_cols(
-        train.split$iq, 
-        as_tibble(train.pca.matrix$iq)
+        data.citysplit$iq, 
+        as_tibble(data.pca.matrix$iq)
       ),
       bind_cols(
-        train.split$sj, 
-        as_tibble(train.pca.matrix$sj)
+        data.citysplit$sj, 
+        as_tibble(data.pca.matrix$sj)
       )
     ) %>% 
       tsibble(index = yearweek, key = city)
     
-    rm(train.pca.matrix, train.split)
+    rm(data.pca.matrix, data.citysplit)
   }
   
   
   # Ready training & valid datasets
   {
-    train.all <- train.all.raw_with.calcs %>% 
+    data.all <- data.all.raw_with.calcs %>% 
       left_join(
-        y = train.all.sa %>% 
+        y = data.all.sa %>% 
           rename_with(.cols = -c(yearweek, city), ~paste0(.x, "_sa")),
         by = c("yearweek", "city")
       ) %>% 
       left_join(
-        y = train.all.pca %>% 
+        y = data.all.pca %>% 
           select(yearweek, city, contains("PC")),
         by = c("yearweek", "city")
       )
     
-    valid <- train.all %>% 
+    test <- data.all %>% 
+      filter(is_test == 1) %>% 
+      select(-is_test)
+    valid <- data.all %>% 
+      filter(is_test == 0) %>% 
+      select(-is_test) %>% 
       group_by(city) %>% 
       slice_max(order_by = yearweek, prop = .2) %>% 
       ungroup() %>% 
       tsibble(index = yearweek, key = city)
-    train <- train.all %>% 
+    train <- data.all %>% 
+      filter(is_test == 0) %>% 
+      select(-is_test) %>% 
       anti_join(y = as_tibble(valid), by = c("city", "yearweek")) %>% 
       tsibble(index = yearweek, key = city)
     
-    rm(train.all.raw_with.calcs, train.all.pca, train.all.sa)
+    train.all <- data.all %>% 
+      filter(is_test == 0) %>% 
+      select(-is_test)
+    
+    rm(data.all.raw_with.calcs, data.all.pca, data.all.sa)
   }
+}
+
+
+# Data Recipe ----
+{
+  # data.recipe_gen <- train.all.raw %>% 
+  #   as_tibble() %>% 
+  #   recipe(total_cases ~ ., data = .) %>% 
+  #   # update_role(
+  #   #   any_of(c(setdiff(vars.y, "total_cases"))), 
+  #   #   new_role = "ID"
+  #   # ) %>%
+  #   update_role(
+  #     any_of(setdiff(vars.id, c("week_start_date", "is_missing"))),
+  #     new_role = "ID"
+  #   ) %>% 
+  #   step_mutate()
+  #   ## Missing Variables
+  #   step_impute_bag(all_numeric_predictors()) %>% 
+  #   step_imp
+  #   ## Calculated variables
+  #   
+  #   ## Deseasonalize
+  #   
+  #   ## PCA
+  #   
+  #   
+  #   timetk::step_smooth(
+  #     # all_numeric_predictors(),
+  #     period = 4,
+  #     precipitation_amt_mm, reanalysis_air_temp_k, reanalysis_avg_temp_k,
+  #     reanalysis_min_air_temp_k, reanalysis_precip_amt_kg_per_m2,
+  #     reanalysis_max_air_temp_k, reanalysis_tdtr_k, reanalysis_relative_humidity_percent
+  #   ) %>%
+  #   step_arrange() %>% 
+  #   step_lag(all_numeric_predictors(), lag = 1:10) %>% 
+  #   # update_role(total_cases, new_role = "predictor") %>%
+  #   # step_lag(total_cases, lag = 1:10, skip = T) %>%
+  #   # update_role(total_cases, new_role = "outcome") %>%
+  #   step_diff(all_numeric_predictors(), lag = 52) %>%
+  #   step_diff(all_numeric_predictors()) %>%
+  #   timetk::step_fourier(week_start_date, K = 4, period = 365/52) %>%
+  #   step_naomit(all_numeric()) %>%
+  #   step_timeseries_signature(week_start_date) %>%
+  #   step_dummy(all_nominal_predictors()) %>% 
+  #   step_corr(all_numeric_predictors(), threshold = .9) %>% 
+  #   step_nzv() %>%
+  #   update_role(week_start_date, new_role = "ID")
+  
+  
+    
 }
 
 
