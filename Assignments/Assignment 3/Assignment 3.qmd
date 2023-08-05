@@ -1,5 +1,5 @@
 ---
-title: "Assignment 2"
+title: "Assignment 3"
 author: "Shaun Harrington"
 format: 
   pdf: default
@@ -10,7 +10,9 @@ editor_options:
   chunk_output_type: console
 ---
 
-<!-- Build 1 ETS model, 1 ARIMA model, 1 dynamic regression models, and 1 model where the previous forecasts are averaged. Use only 4 years of data to build your forecasts, and then estimate the models' performance on the 5th year.  Provide measures that assess the performance of your three models.  Which performed the best and why? -->
+<!-- Pick any monthly time series you choose with at least five years of data that you have yet to use previously.  -->
+
+<!-- Build 1 ETS, 1 ARIMA, 1 NNETAR, and one ensemble model on four years of that data.  Forecast the 5th year.  Provide metrics to assess performance. -->
 
 ## Setup
 
