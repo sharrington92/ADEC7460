@@ -4,6 +4,10 @@
   library(fpp3)
   library(zoo)
   library(tidymodels)
+  require(timetk)
+  require(randomForest)
+  require(xgboost)
+  require(doParallel)
   
   # https://www.drivendata.org/competitions/44/dengai-predicting-disease-spread/page/82/#features_list
   
@@ -78,7 +82,7 @@
     bind_rows(test.raw) %>% 
     mutate(yearweek = yearweek(week_start_date)) %>% 
     tsibble(key = city, index = yearweek) %>% 
-    fill_gaps() %>% 
+    fill_gaps() %>%
     relocate(yearweek, everything())
   
   
@@ -96,7 +100,7 @@
 {
   
   
-  vars.id <- c("yearweek", "year", "city", "weekofyear", "week_start_date")
+  vars.id <- c("yearweek", "year", "city", "weekofyear", "week_start_date", "is_test")
   vars.fact <- setdiff(colnames(data.all.raw), vars.id)
   
   
@@ -109,14 +113,18 @@
     data.all.raw_with.miss <- data.all.raw %>% 
       mutate(
         is_missing = coalesce(total_cases*0, 1) %>% factor,
-        year = year(yearweek),
         week_start_date = as.Date(yearweek),
+        year = year(week_start_date),
         weekofyear= week(week_start_date)
       ) %>% 
+      left_join(
+        y = test.start, by = "city"
+      ) %>% 
       mutate(
-        across(all_of(setdiff(vars.fact, "total_cases")), na.approx),
-        total_cases = ifelse(is_test == 0, coalesce(total_cases, 0), NA)
-      )
+        across(all_of(setdiff(c(vars.fact, "is_test"), "total_cases")), na.approx),
+        total_cases = ifelse(week_start_date < test_start, coalesce(total_cases, 0), NA)
+      ) %>% 
+      select(-test_start)
     
     
     
@@ -128,7 +136,7 @@
     #   # mutate(total_cases_approx = na.approx(total_cases)) %>%
     #   ggplot(aes(
     #     x = yearweek,
-    #     y = coalesce(total_cases, -1),
+    #     y = coalesce(total_cases, -10),
     #     # y = total_cases_approx,
     #     # color = is_missing,
     #     shape = is_missing, group = city
@@ -218,16 +226,20 @@
       
     }
     
-    data.all.sa <- setdiff(
-      colnames(data.all.raw_with.miss), 
+    cols <- setdiff(
+      colnames(data.all.raw_with.calcs), 
       c(vars.id, "is_missing", "total_cases_scaled", "total_cases", "is_test")
-    ) %>% 
+    )
+    
+    
+    data.all.sa <- cols[!str_detect(cols, "cases")] %>% 
       lapply(., \(x){
         print(x)
-        fn_deseasonalize(data.all.raw_with.miss, !!x)
+        fn_deseasonalize(data.all.raw_with.calcs, !!x)
       }) %>% 
       reduce(., \(x, y){inner_join(x, y, by = c("yearweek", "city"))})
     
+    rm(cols)
   }
   
   
