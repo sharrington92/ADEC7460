@@ -161,8 +161,12 @@
       ungroup() %>% 
       group_by(city) %>% 
       mutate(
+        days_in_week = week_start_date - lag(week_start_date),
         total_cases_scaled = scale(total_cases),
         cases_cumulative = cumsum(total_cases),
+        total_cases_trans_log = log(cases_cumulative) - lag(log(cases_cumulative), default = 0),
+        total_cases_trans_bc2 = box_cox(cases_cumulative, 2) - lag(box_cox(cases_cumulative, 2), default = 0),
+        total_cases_trans_bc.7 = box_cox(cases_cumulative, .75) - lag(box_cox(cases_cumulative, .75), default = 0),
         cases_365d = rollsum(total_cases, k = 52, na.pad = TRUE, fill = NA, align = "right"),
         cases_8w = rollsum(total_cases, k = 8, na.pad = TRUE, fill = NA, align = "right"),
         cases_26w = rollsum(total_cases, k = 26, na.pad = TRUE, fill = NA, align = "right"),
@@ -182,6 +186,10 @@
       ) %>% 
       ungroup()
     
+    data.all.raw_with.calcs %>% 
+      as_tibble() %>% 
+      select(year, weekofyear, yearweek, week_start_date, city, days_in_week) %>% 
+      View()
     
     # bind_rows(
     #   other.data.list$Iquitos_Population_Data.csv %>% 
@@ -398,4 +406,48 @@
     filter(city == "sj") %>% 
     features(total_cases, features = guerrero) %>% 
     pull(lambda_guerrero)
+  
+  
+  lambda.iq_cum <- train %>% 
+    filter(city == "iq") %>% 
+    features(log(cases_cumulative), features = guerrero) %>% 
+    pull(lambda_guerrero)
+  
+  lambda.sj_cum <- train %>% 
+    filter(city == "sj") %>% 
+    features(log(cases_cumulative), features = guerrero) %>% 
+    pull(lambda_guerrero)
+  
+  
+  lambda.iq_trans_log <- train %>% 
+    filter(city == "iq") %>% 
+    features(total_cases_trans_log, features = guerrero) %>% 
+    pull(lambda_guerrero)
+  
+  lambda.sj_cum_log <- train %>% 
+    filter(city == "sj") %>% 
+    features(total_cases_trans_log, features = guerrero) %>% 
+    pull(lambda_guerrero)
+  
+  lambda.iq_trans_bc2 <- train %>% 
+    filter(city == "iq") %>% 
+    features(total_cases_trans_bc2, features = guerrero) %>% 
+    pull(lambda_guerrero)
+  
+  lambda.sj_cum_bc2 <- train %>% 
+    filter(city == "sj") %>% 
+    features(total_cases_trans_bc2, features = guerrero) %>% 
+    pull(lambda_guerrero)
+  
+  
+  lambda.iq_trans_bc.7 <- train %>% 
+    filter(city == "iq") %>% 
+    features(total_cases_trans_bc.7, features = guerrero) %>% 
+    pull(lambda_guerrero)
+  
+  lambda.sj_cum_bc.7 <- train %>% 
+    filter(city == "sj") %>% 
+    features(total_cases_trans_bc.7, features = guerrero) %>% 
+    pull(lambda_guerrero)
 }
+
