@@ -52,6 +52,7 @@
     tsibble(index = yearweek)
 }
 
+
 # GLM ----
 {
   
@@ -215,72 +216,39 @@
     
     ## Estimate ----
     {
-      fit.glm <- train_sub %>% 
-        filter(cases_cumulative > 0) %>% 
-        model(glm = TSLM(
-          # box_cox(total_cases, lambda.iq) ~ 1 
-          log((cases_cumulative)) ~ 1 
-          # + lag(box_cox(total_cases, lambda.iq), n = 1)
-          # + lag(box_cox(total_cases^2, lambda.iq), n = 1)
-          # + lag(box_cox(total_cases, lambda.iq), n = 2)
-          # + lag(box_cox(total_cases, lambda.iq), n = 3)
-          # + lag(box_cox(total_cases^2, lambda.iq), n = 3)
-          # # + (rollmean(total_cases, k = 2, fill = NA, align = "right")>=5) %>% lag
-          # # + (rollmean(total_cases, k = 2, fill = NA, align = "right")>=30) %>% lag
-          # + I((lag(total_cases, n = 1)+1) / (lag(total_cases, n = 2)+1))
-          # # + I((lag(total_cases, n = 1)+1) / (lag(rollsum(total_cases, k = 20, fill = NA, align = "right"), n = 1)+1))
-          # + I((lag(total_cases, n = 1)+1) / (lag(rollsum(total_cases, k = 8, fill = NA, align = "right"), n = 1)+1))
-          # + I((lag(total_cases, n = 1)+1) / (lag(rollsum(total_cases, k = 52, fill = NA, align = "right"), n = 1)+1))
-          # # + lag(box_cox(total_cases^2, lambda.iq), n = 2)
-          # # + rollsum(box_cox(total_cases, lambda.iq), k = 8, fill = NA, align = "right") %>% lag(, n = 1)
-          # + rollsum(box_cox(total_cases, lambda.iq), k = 52, fill = NA, align = "right") %>% lag(, n = 1)
-          # + rollsum(box_cox(total_cases, lambda.iq), k = 52, fill = NA, align = "right")^2 %>% lag(, n = 1)
-          # # + lag(cases_8w^2, n = 1)
-          # # + lag(cases_26w, n = 1) + lag(cases_26w^2, n = 1)
-          # # + lag(cases_365d, n = 4)
-          # # + lag(cases_365d^2, n = 4)
-          # + lag(precip_4w, n = 5) #+ lag(precip_4w^2, n = 5)
-          # + lag(precip_365d, n = 1) #+ lag(precip_365d^2, n = 1)
-          # # + lag(hdd_reanalysis_365d, n = 1)
-          # # + hdd_reanalysis_365d + I(hdd_reanalysis_365d^2)
-          # # + lag(humidity_rel_avg_2w, n = 8)
-          # # + ndvi_ne #%>% log()
-          # # + ndvi_nw #%>% log()
-          # # + ndvi_se %>% log()
-          # + ndvi_sw #%>% log()
-          # + reanalysis_air_temp_k %>% rollmean(k = 3, fill = NA, align = "right") %>% lag(., n = 4)
-          # # + reanalysis_avg_temp_k
-          # # + reanalysis_max_air_temp_k
-          # # + reanalysis_min_air_temp_k
-          # + lag(hdd_reanalysis_4w, n = 6) #+ lag(hdd_reanalysis_4w^2, n = 4)
-          # + lag(humidity_rel_avg_4w, n = 6)
-          # + I(hdd_reanalysis_4w_sa * humidity_rel_avg_4w_sa) %>% lag(n = 6)
-          # 
-          # # + precip_365d
-          # + station_diur_temp_rng_c_sa
-          # # + station_avg_temp_c_sa %>% rollmean(k = 2, fil = NA, align = "right") #%>% lag(n = 1)
-          # + reanalysis_tdtr_k_sa %>% rollmean(k = 5, fil = NA, align = "right") #%>% lag(n = 1)
-          # 
-          # + PC1 %>% lag(n = 4)
-          # + lag(PC15, n =5)
-          # + lag(PC13, n = 3)
-          # + lag(PC4, n = 3)*lag(PC5, n = 3)
-          
-        ))
+      train_sub %>% 
+        filter(cases_cumulative > 10) %>%
+        gg_tsdisplay(
+          total_cases_trans_bc.7 #%>% #log() %>% 
+            # box_cox(., lambda.iq_trans) %>% 
+            # difference()
+        )
+      
+      L = .75
+      train_sub %>% 
+        # filter(cases_cumulative > 10) %>%
+        mutate(cases_trans = box_cox(cases_cumulative, L) - lag(box_cox(cases_cumulative, L))) %>% 
+        autoplot(cases_trans) 
+        autolayer(train_sub, total_cases, color = "red3", alpha = .25) 
       
       
       fit.ar <- train_sub %>% 
-        filter(cases_cumulative > 0) %>% 
+        filter(cases_cumulative > 10) %>% 
         model(
-          ARIMA(box_cox(cases_cumulative, .756) ~ fourier(K = 10)),
+          m1 = ARIMA(
+            box_cox(cases_cumulative, .7) ~ 1 + 
+              #fourier(K = 5) + PDQ(D=0,Q=0) +
+              lag(precip_4w, n = 5) +
+              rollmean(reanalysis_tdtr_k_sa, k = 5, fill = NA, align = "right") +
+              lag(hdd_reanalysis_4w_sa * humidity_rel_avg_4w_sa, n = 6)
+          ),
           # ETS(log(cases_cumulative) ~ trend("Ad", phi = .5))
         )
     }
     
     # Analyze ----
     {
-      fit.glm %>% 
-        gg_tsresiduals()
+      fit.ar %>% report()
       
       fit.ar %>% 
         # augment() %>% autoplot(.fitted, color = "red3") + autolayer(train_sub, cases_cumulative, color = "black")
@@ -293,34 +261,43 @@
       
       ### Evaluate ----
       {
-        fx.valid_glm <- fit.glm %>% 
-          forecast(valid_sub)
-        fx.valid_glm %>% 
-          autoplot(valid_sub, level = NULL)
-        fx.valid_glm %>% 
-          accuracy(valid_sub)
         
         fx.valid_ar <- fit.ar %>% 
           forecast(valid_sub)
         fx.valid_ar %>% #as_tibble() %>% View()
-          autoplot(valid_sub, level = NULL) + autolayer(train.all_sub, cases_cumulative) +
+          autoplot(valid_sub, level = NULL) + 
+          autolayer(train.all_sub, cases_cumulative) #+
           scale_y_continuous(trans = "log10")
         fx.valid_ar %>% 
           fabletools::accuracy(valid_sub)
         
         fx.valid_ar %>% 
-          select(yearweek, .mean, cases_cumulative) %>% 
+          # hilo(50) %>% 
+          mutate(
+            predict_cases = difference(.mean),
+            .resid = predict_cases - total_cases
+          ) %>% 
+          select(.model, yearweek, total_cases, predict_cases, cases_cumulative, .resid) %>% #View()
+          # as_tibble() %>% summarize(mae = mean(abs(.resid), na.rm = T))
+          pivot_longer(c(total_cases, predict_cases)) %>% #View()
+          ggplot(aes(x = yearweek, y = value, color = name)) + geom_line()
+          filter(!is.na(predict_cases)) %>% 
+          MAE(.resid = .$predict_cases - .$total_cases)
+        
+        
+        fx.valid_ar %>% 
+          select(yearweek, .mean, total_cases_trans_bc.7) %>% 
           # hilo(1)
           mutate(
-            total_cases.pred = difference(.mean)
+            total_cases.pred = (.mean)
           ) %>% 
           right_join(
-            y = train.all_sub %>% select(yearweek, total_cases)
+            y = train.all_sub %>% select(yearweek, total_cases_trans_bc.7)
           ) %>% 
           filter(year(yearweek) >= 2006) %>% 
           ggplot(aes(x = yearweek)) +
           geom_line(aes(y = total_cases.pred), color = "red3") +
-          geom_line(aes(y = total_cases), color = "black")
+          geom_line(aes(y = total_cases_trans_bc.7), color = "black")
         
         
         
