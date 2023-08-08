@@ -1,0 +1,195 @@
+---
+title: "Week 6 Discussion"
+author: "Shaun Harrington"
+format: 
+  html:
+    toc: true
+    code-fold: true
+editor_options: 
+  chunk_output_type: console
+---
+
+<!-- Pick a time series of interest to you. For the time series data you selected, use neural nets to build forecasts. Interpret. -->
+
+## Setup
+
+
+```{r}
+#| warning: false
+
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE
+)
+
+library(tidyverse)
+library(fpp3)
+library(fredr)
+library(scales)
+
+theme_set(theme_bw())
+
+if(basename(getwd()) != "Week 6") setwd(file.path(getwd(), "Discussions", "Week 6"))
+
+
+```
+
+This week I'll be getting two series from FRED, the non-seasonally-adjusted unemployment rate and a consumer sentiment index by the University of Michigan. Because we saw such a massive spike in unemployment during the onset of COVID-19, I'll add some dummy variables to help mitigate impacts to the model on the forecast period. 
+
+```{r}
+
+data <- c("UMCSENT", "UNRATENSA") %>% 
+  lapply(., fredr) %>% 
+  do.call(bind_rows, .) %>% 
+  select(date, series_id, value) %>% 
+  pivot_wider(names_from = series_id, values_from = value) %>% 
+  rename(
+    sentiment = UMCSENT, unemploy = UNRATENSA
+  ) %>% 
+  filter(year(date) >= 2000) %>% 
+  mutate(
+    covid = ifelse(date == ymd("2020-03-01"), 1, 0),
+    covid_lag1 = lag(covid, default = 0),
+    covid_lag2 = lag(covid, n = 2, default = 0),
+    covid_lag3 = lag(covid, n = 3, default = 0),
+    date = yearmonth(date),
+    sentiment_lag12 = lag(sentiment, 12)
+  ) %>% 
+  drop_na() 
+
+
+```
+
+
+
+### Data Preparation
+
+The test set will be the latest 12 months and the training set will be the prior four years.
+
+```{r}
+
+test <- as_tibble(data) %>% 
+  slice_max(order_by = date, n = 12) %>% 
+  ungroup() %>% 
+  tsibble(index = date)
+
+train <- as_tibble(data) %>% 
+  anti_join(y = test, by = "date") %>% 
+  tsibble(index = date)
+
+data <- data %>% 
+  tsibble(index = date)
+
+```
+
+
+
+### Data Exploration
+
+As we all know, the unemployment rate is highly seasonal and has strong autocorrelation.
+
+```{r}
+#| fig-height: 4
+
+train %>% 
+  gg_tsdisplay(unemploy) +
+  ggtitle("Unemployment Rate")
+
+```
+
+
+#### Decomposition
+
+This is the decomposition. I'm forcing the window of the forecast to be 48 months because the COVID-19 spike was affecting the decomposition too much.
+
+```{r}
+
+train %>% 
+  model(STL(unemploy ~ season(window = 48))) %>%
+  components() %>% 
+  autoplot()
+
+```
+
+#### Lambda-Guerrero Transformation
+
+```{r}
+lambda.guerrero <- train %>% 
+  features(unemploy, guerrero) %>% 
+  pull()
+
+lambda.guerrero_sent <- train %>% 
+  features(sentiment_lag12, guerrero) %>% 
+  pull()
+
+```
+
+
+## Modeling
+
+#### Estimation
+
+I'm estimating three models, two neural networks and an ARIMA as a comparison. The neural networks are identical except the number of nodes selected, 2 versus 5. All the models have the same transformations and regressors. I did have some issues with getting the appropriate seasonality to be displayed in the forecast, though I noticed that including more nodes typically resulted in better seasonality (but worse forecasts).
+
+```{r}
+
+
+(fit <- train %>% 
+  model(
+    arima = ARIMA(
+      box_cox(unemploy, lambda.guerrero) ~ box_cox(sentiment_lag12, lambda.guerrero_sent) + 
+        covid + covid_lag1 + covid_lag2 + covid_lag3, 
+    ),
+    nn2 = NNETAR(
+      box_cox(unemploy, lambda.guerrero) ~ box_cox(sentiment_lag12, lambda.guerrero_sent) + 
+        covid + covid_lag1 + covid_lag2 + covid_lag3 + AR(P = 2), # + month(date), 
+      n_nodes = 2, scale_inputs = TRUE
+    ),
+    nn5 = NNETAR(
+      box_cox(unemploy, lambda.guerrero) ~ box_cox(sentiment_lag12, lambda.guerrero_sent) + 
+        covid + covid_lag1 + covid_lag2 + covid_lag3 + AR(P = 2), # + month(date), 
+      n_nodes = 5, scale_inputs = TRUE
+    )
+  ))
+
+
+```
+
+
+### Forecast
+
+The models were trained on data prior to `r max(as.Date(train$date)) + months(1)`. The forecast period is the interval `r lubridate::interval(min(as.Date(test$date)), max(as.Date(test$date)))`. 
+
+*Huge tip if your forecast() function takes a long time to generate: include the times parameter and set it to a lower value. Since there's randomness involved, it'll add more volatility to the forecast but at least a happy-medium can be found. [Source](https://github.com/tidyverts/fable/issues/171)*
+
+```{r}
+
+  (fx <- fit %>% 
+        forecast(
+          test,
+          times = 100
+        ))
+  
+
+  fx %>% 
+    autoplot(
+        data %>% filter(year(date) > 2019),
+        level = NULL, 
+        size = .75, alpha = .5
+      ) +
+    ggtitle("Unemployment Out-of-Sample Forecast") +
+    scale_y_continuous(labels = label_comma())
+
+```
+
+The 5-node NN does achieve the best results on this test set. It doesn't look too far off from the 2-node, but captures the seasonality much better. 
+
+```{r}
+
+fx %>% 
+  accuracy(test)
+
+```
+
+
