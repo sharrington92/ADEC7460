@@ -20,6 +20,22 @@ I'll be using data from the EIA to predict wind generation in Texas using prices
 
 One source of volatility that could diminish this relation would be the variation of wind. I was unable to find wind data for Texas, but an alternative data series that could fit is capacity factor. This is defined as $\frac{Average MWh}{Total Capacity}$. When prices are positive (and above marginal cost $\approx$ 0), wind turbines will generate as long as there is wind. Thus while a drop in capacity factor could be due to negative pricing, it is much more likely to be from a decrease in wind. 
 
+```{r}
+#| echo: false
+
+if(!str_detect(basename(getwd()), "Time Series") & str_detect(dirname(getwd()), "Time Series")){
+  repeat{
+    setwd("../")
+    if(str_detect(basename(getwd()), "Time Series")){
+      break
+    }
+  }
+}
+
+if(basename(getwd()) != "Assignment 3") setwd(file.path(getwd(), "Assignments", "Assignment 3"))
+
+```
+
 
 ```{r}
 #| warning: false
@@ -27,7 +43,8 @@ One source of volatility that could diminish this relation would be the variatio
 knitr::opts_chunk$set(
 	echo = TRUE,
 	message = FALSE,
-	warning = FALSE
+	warning = FALSE,
+	fig.width = 8
 )
 
 library(tidyverse)
@@ -39,32 +56,11 @@ library(zoo)
 
 theme_set(theme_bw())
 
-if(!str_detect(basename(getwd()), "Time Series") & str_detect(dirname(getwd()), "Time Series")){
-  repeat{
-    setwd("../")
-    if(str_detect(basename(getwd()), "Time Series")){
-      break
-    }
-  }
-}
+eia.key <- Sys.getenv("EIA_API_KEY")
 
-if(basename(getwd()) != "Assignment 2") setwd(file.path(getwd(), "Assignments", "Assignment 2"))
-
-
-
-```
-
-### Get Data
-
-
-```{r}
-
- eia.key <- Sys.getenv("EIA_API_KEY")
-  
-    
-  fn_query_eia <- function( api_url = NULL,
-    the_series_id, the_source = "steo", the_frequency = "monthly", the_facet = "seriesId",
-    the_offset = 0, the_length = 5000, the_eia_key = eia.key){
+fn_query_eia <- function( api_url = NULL,
+  the_series_id, the_source = "steo", the_frequency = "monthly", the_facet = "seriesId",
+  the_offset = 0, the_length = 5000, the_eia_key = eia.key){
     
     if(is.null(api_url)){
       the_url = "https://api.eia.gov/v2/"
@@ -105,9 +101,13 @@ if(basename(getwd()) != "Assignment 2") setwd(file.path(getwd(), "Assignments", 
     }
   }
 
+
 ```
 
-```{r}
+### Get Data
+
+
+```{r get_data}
 
 url.wind <- "https://api.eia.gov/v2/electricity/electric-power-operational-data/data/?frequency=monthly&data[0]=generation&facets[fueltypeid][]=AOR&facets[location][]=TX&facets[sectorid][]=99&sort[0][column]=period&sort[0][direction]=desc&offset=0&length=5000"
 
@@ -121,7 +121,7 @@ data.wind.cf <- fn_query_eia(api_url = "https://api.eia.gov/v2/total-energy/data
 
 The data is split into two datasets, a training and testing dataset. The testing set are the most recent 12 months, while the training set are the 48 months preceding that. 
 
-```{r}
+```{r prep_data}
 
 
 
@@ -194,8 +194,9 @@ data <- data %>%
 
 #### Monthly Wind Generation in Texas
 
-```{r}
+```{r plot_gen}
 #| fig-height: 4
+#| fig-width: 8
 
 train %>% 
   gg_tsdisplay(generation)
@@ -204,8 +205,9 @@ train %>%
 
 #### Monthly Average Wholesale Electricity Price in Texas (log scale)
 
-```{r}
+```{r plot_price}
 #| fig-height: 4
+#| fig-width: 8
 
 train %>% 
   gg_tsdisplay(log(price))
@@ -216,7 +218,9 @@ train %>%
 
 The STL Decomposition breaks out the data into the trend, season, and remainder components. The seasonality will largely be driven by wind though I would suspect repairs in the shoulder months playing a role. The trend will show the general increase in supply over time. The remainder will contain wind deviations from normal, unexpected turbine outages, and other unforeseeable factors.
 
-```{r}
+```{r plot_decomp}
+#| fig-height: 5
+
 
 train %>% 
   model(STL(generation)) %>% 
@@ -231,7 +235,9 @@ train %>%
 
 The 30-month lag appears to be the most correlated.
 
-```{r}
+```{r plot_correl}
+#| fig-height: 8
+
 
 train %>% 
   pivot_longer(-c(date, generation, capacity.factor), names_to = "lag", values_to = "value") %>% 
@@ -255,36 +261,39 @@ train %>%
 
 ## Modeling
 
-#### Estimation
+### Estimation
 
 Four models will be estimated: an ETS, an auto-ARIMA, and an ARIMAX using gas and diesel prices as regressors. The fourth model will be a simple average of the others. 
 
-```{r}
+```{r est_fit}
 
 
 (fit <- train %>% 
   model(
     "ets" = ETS(box_cox(generation, .208)),
     "arima" = ARIMA(box_cox(generation, .208) ~ log(price_lag12_ma) + log(price_lag24_ma) + log(capacity.factor)),
-    "nn" = NNETAR(
+    "nn2" = NNETAR(
       box_cox(generation, .208) ~ log(price_lag24_ma) + log(price_lag36_ma) + (capacity.factor), #+ 
         # price_lag18 + price_lag24 + 
         # AR(P = 1),
-      n_nodes = 3, scale_inputs = TRUE
+      n_nodes = 2, scale_inputs = TRUE
     ),
-    "nn2" = NNETAR(
+    "nn5" = NNETAR(
       box_cox(generation, .208) ~ log(price_lag24_ma) + log(price_lag36_ma) + (capacity.factor) + 
         price_lag30, # + price_lag24, #+
         # AR(P = 1),
       n_nodes = 5, scale_inputs = TRUE
     )
-  )) #%>% 
-   # mutate(ensemble = (ets + arima + nn) / 3))
-
+  ) %>% 
+   mutate(ensemble = (ets + arima + nn2) / 3))
+  
 
 ```
 
 ```{r}
+#| eval: false
+#| echo: false
+
 
 fit %>% 
   select(arima) %>% 
@@ -293,20 +302,20 @@ fit %>%
 ```
 
 
-## Forecast
+### Forecast
 
-The models were trained on data prior to `r max(as.Date(train$date)) + months(1)`. The forecast period is the interval `r lubridate::interval(min(as.Date(test$date)), max(as.Date(test$date)))`. Three forecasts are produced from each model, one from each of the three scenarios (low, medium, and high).
+The models were trained on data prior to `r max(as.Date(train$date)) + months(1)`. The forecast period is the interval `r lubridate::interval(min(as.Date(test$date)), max(as.Date(test$date)))`. 
 
+For the forecast period, the average capacity factor by month will be used along with lagged transformations of price. Two neural net models are included, one with 2 nodes and the other with 5. 
 
-```{r}
+```{r make_forecast}
 
 fx <- fit %>% 
-    forecast(test, times = 100)
+    forecast(test, times = 50)
   
 
 fx %>% 
   autoplot(
-      # data %>% filter(year(date)>2020),
       level = NULL, size = .75, alpha = .75
     ) +
   autolayer(
@@ -314,16 +323,15 @@ fx %>%
     size = 1, alpha = .75#, linetype = "dashed"
   ) +
   ggtitle("Texas Wind Generation Out-of-Sample Forecast") + 
-  # scale_color_viridis_d() +
   scale_y_continuous(labels = label_comma()); fx %>% 
   accuracy(test, measures = point_accuracy_measures) %>% 
   arrange(RMSE)
 
 ```
 
-The ETS model performs best by a large margin with an RMSE of $8,674. 
+The ensemble model outperforms the rest, likely a result of the forecasts not being biased one way or the other in comparison to the actual generation. The ARIMA is next and the remaining neural nets and ETS clustered at the bottom.
 
-```{r}
+```{r fx_accuracy}
 
 fx %>% 
   accuracy(test, measures = list(point_accuracy_measures, distribution_accuracy_measures)) %>% 
@@ -331,19 +339,21 @@ fx %>%
 
 ```
 
-## Cross Validation
+### Cross Validation
 
-```{r}
+One issue with neural networks is selecting the appropriate number of nodes. One way this can be handled is through cross validation. By splitting the dataset into various components and training models on each of these, we can compare how each does over multiple out-of-sample forecasts. We'll split the training set into 9 different parts and train neural nets with 2, 3, 4, 5, 6, 7, and 8 nodes to determine which would perform best on average. 
+
+```{r cv_data}
 
 train.cv <- train %>% 
-  stretch_tsibble(.init = 12, .step = 3)
+  stretch_tsibble(.init = 18, .step = 3)
 
 train.cv$.id %>% max()
 
 ```
 
 
-```{r}
+```{r fit_cv}
 
 (fit.cv <- train.cv %>% 
   model(
@@ -371,164 +381,42 @@ train.cv$.id %>% max()
         # AR(P = 1),
       n_nodes = 5, scale_inputs = TRUE
     ),
+     "nn6" = NNETAR(
+      box_cox(generation, .208) ~ log(price_lag24_ma) + log(price_lag36_ma) + (capacity.factor), #+ 
+        # price_lag18 + price_lag24 + 
+        # AR(P = 1),
+      n_nodes = 6, scale_inputs = TRUE
+    ),
+     "nn7" = NNETAR(
+      box_cox(generation, .208) ~ log(price_lag24_ma) + log(price_lag36_ma) + (capacity.factor), #+ 
+        # price_lag18 + price_lag24 + 
+        # AR(P = 1),
+      n_nodes = 7, scale_inputs = TRUE
+    ),
      "nn8" = NNETAR(
       box_cox(generation, .208) ~ log(price_lag24_ma) + log(price_lag36_ma) + (capacity.factor), #+ 
         # price_lag18 + price_lag24 + 
         # AR(P = 1),
       n_nodes = 8, scale_inputs = TRUE
-    ),
-     "nn15" = NNETAR(
-      box_cox(generation, .208) ~ log(price_lag24_ma) + log(price_lag36_ma) + (capacity.factor), #+ 
-        # price_lag18 + price_lag24 + 
-        # AR(P = 1),
-      n_nodes = 15, scale_inputs = TRUE
     )
     )
-  ) #%>% 
-   # mutate(ensemble = (ets + arima + nn) / 3))
-
-```
-
-```{r}
-
-fit.cv %>% 
-  forecast(train.cv, times = 100) %>% 
-  accuracy(train.cv)
-
-```
-
-
-## Bagged Forecasts
-
-Due to the uncertainty in the regressors, bagging the forecast could aid tremendously. We'll generate 100 new training sets by simulating an STL model. We'll create a new test set that combines them into one and updates the tsibble key to include these scenarios. 
-
-### Simulating New Data
-
-```{r}
-
-
-sales_stl <- train %>% 
-  model(STL(sales.gas))
-
-sim <- sales_stl %>% 
-  generate(new_data = train, times = 100, bootstrap_block_size = 12) %>% 
-  select(-.model, -sales.gas)
-
-test.sim <- list(
-    test.high %>% rename(.sim = sales.gas) %>% mutate(.scenario = "high") %>% as_tibble(),
-    test.med %>% rename(.sim = sales.gas) %>% mutate(.scenario = "medium") %>% as_tibble(),
-    test.low %>% rename(.sim = sales.gas) %>% mutate(.scenario = "low") %>% as_tibble()
-  ) %>% 
-  do.call(bind_rows, .) %>% 
-  cross_join(y = tibble(.rep = as.character(1:100))) %>% 
-  tsibble(key = c(.rep, .scenario))
-
-```
-
-
-Using this simulated training set, we build new models of the same type just as before. Each model type will be fit to each of the 20 training sets in turn giving $100*3=300$ different models. These models will then forecast the testing data for each scenario, resulting in $300*3=900$ different forecasts.
-
-### Model & Forecast
-
-The below code estimated these models and saved the output for this report compilation to read.
-
-```{r}
-#| eval: false
-
-sim_models <- sim %>% 
-  model(
-    ets = ETS(.sim),
-    arima = ARIMA(.sim ~ pdq(d = 1) + PDQ(D=0)),
-    dynamic = ARIMA(.sim ~ gas.price + pdq(d = 1) + PDQ(D=0)),
-    # dynamic2 = ARIMA(.sim ~ gas.price + diesel.price + pdq(d = 1) + PDQ(D=0))
   )
 
-sim_forecasts <- lapply(test.sim %>% split(~.scenario), \(x){
-  sim_models %>% 
-    forecast(update_tsibble(x, key = .rep))
-}) %>% 
-  lapply(as_tibble) %>% 
-  do.call(bind_rows, .) %>% 
-  tsibble(key = c(.scenario, .rep, .model))
+```
 
+Cross validation suggests the simple 2-node network has a lower median RMSE than the others.
 
-saveRDS(sim_models, "sim_models.RDS")
-saveRDS(sim_forecasts, "sim_forecasts.RDS")
+```{r fx_cv}
+
+fx.cv <- fit.cv %>% 
+  forecast(train.cv, times = 10) 
+
+fx.cv %>% 
+  mutate(.model = factor(.model, levels = paste("nn", c(2:8), sep = ""))) %>% 
+  accuracy(train.cv) %>% 
+  ggplot(aes(x = RMSE, y = .model)) +
+  geom_boxplot()
 
 ```
 
 
-```{r}
-
-sim_models <- readRDS("sim_models.RDS") %>% 
-  select(-dynamic2)
-
-
-sim_forecasts <- readRDS("sim_forecasts.RDS")
-
-
-sim_forecasts %>% 
-  autoplot(.mean) +
-  autolayer(
-    data %>% tsibble() %>% filter(year(date)>2020), sales.gas
-  ) +
-  guides(colour = "none") +
-  labs(title = "Gasoline Station Sales: bootstrapped forecasts on low, medium, and high scenarios.")
-
-```
-
-These bootstrapped forecasts are then averaged together to create a new ensemble forecast. The below plot compares this bagged forecast against the best scenario, the high scenario. The dashed lines are the bagged forecast at the 80th percentile, mean, and 20th percentile, respectively.
-
-```{r}
-
-bagged <- sim_forecasts %>% 
-  summarise(
-    bagged_mean = mean(.mean),
-    bagged_median = median(.mean),
-    bagged_p80 = quantile(.mean, .8),
-    bagged_p20 = quantile(.mean, .2)
-  )
-
-fx.high %>% 
-  autoplot(
-      data %>% tsibble() %>% filter(year(date)>2020), 
-      level = NULL,
-      size = .75, alpha = .75#, linetype = "dashed"
-  ) +
-  autolayer(bagged, bagged_mean, col = "gray30", size = 1, linetype = "dashed") +
-  autolayer(bagged, bagged_p80, col = "gray30", size = 1, linetype = "dashed") +
-  autolayer(bagged, bagged_p20, col = "gray30", size = 1, linetype = "dashed") +
-  labs(title = "Gasoline Station Sales: bootstrapped forecasts")
-
-```
-
-
-## Model Comparison
-
-The following table summarizes each of these models and scenarios:
-
-```{r}
-
-bind_rows(
-    fx.low %>% mutate(.scenario = "low") %>% as_tibble() %>% select(.scenario, .model, date, .mean),
-    fx.med %>% mutate(.scenario = "med") %>% as_tibble() %>% select(.scenario, .model, date, .mean),
-    fx.high %>% mutate(.scenario = "high") %>% as_tibble() %>% select(.scenario, .model, date, .mean),
-    bagged %>% 
-      as_tibble() %>% 
-      select(date, bagged_mean) %>% 
-      pivot_longer(-date, names_to = ".model", values_to = ".mean") %>% 
-      mutate(.scenario = "bagged")
-  ) %>% 
-  left_join(test, by = "date") %>% 
-  as_tibble() %>% 
-  group_by(.scenario, .model) %>% 
-  summarize(
-    RMSE = RMSE(.mean - sales.gas),
-    MAPE = MAPE(.mean - sales.gas, .actual = sales.gas),
-    MAE = MAE(.mean - sales.gas)
-  ) %>% 
-  arrange(RMSE)
-
-```
-
-The bagged forecast outperforms all the other forecasts, even the dynamic model in the high scenario. This is despite the high scenario dynamic model only containing the *better* data in the test set and the bagged forecast containing all low, medium, and high scenarios. A better forecast could possibly also be achieved by simulating the test set gas and diesel prices rather than using scenario forecasts. This approach would also enable us to quantify the uncertainty present in the exogenous regressors better. The first approach produces near meaningless confidence intervals, since those do not consider the uncertainty in the regressors. Simulating these variables and calculating the quantiles enables us to embed this uncertainty within the forecast. 
