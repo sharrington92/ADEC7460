@@ -14,8 +14,11 @@ editor_options:
 
 <!-- Build 1 ETS, 1 ARIMA, 1 NNETAR, and one ensemble model on four years of that data.  Forecast the 5th year.  Provide metrics to assess performance. -->
 
-## Setup
+## Introduction
 
+I'll be using data from the EIA to predict wind generation in Texas using prices. Theory would indicate that higher prices will incentivize more electricity production. Because wind turbines are relatively cheap to build and Texas' unique electricity market enables a wide number of suppliers to join the market, it would make sense for prices to be a predictor of wind turbine generation.
+
+One source of volatility that could diminish this relation would be the variation of wind. I was unable to find wind data for Texas, but an alternative data series that could fit is capacity factor. This is defined as $\frac{Average MWh}{Total Capacity}$. When prices are positive (and above marginal cost $\approx$ 0), wind turbines will generate as long as there is wind. Thus while a drop in capacity factor could be due to negative pricing, it is much more likely to be from a decrease in wind. 
 
 
 ```{r}
@@ -31,6 +34,8 @@ library(tidyverse)
 library(fpp3)
 library(fredr)
 library(scales)
+library(jsonlite)
+library(zoo)
 
 theme_set(theme_bw())
 
@@ -51,41 +56,66 @@ if(basename(getwd()) != "Assignment 2") setwd(file.path(getwd(), "Assignments", 
 
 ### Get Data
 
-Gasoline station sales will be retrieved from the US Census. 
 
 ```{r}
 
-url <- "https://www.census.gov/retail/marts/www/adv44700.txt"
-
-# gasoline sales
-data.gas <- read_table(url, skip = 1, n_max = 31) %>% 
-  rename_with(~c("year", as.character(1:12))) %>% 
-  pivot_longer(-year, names_to = "month", values_to = "sales.gas") %>% 
-  mutate(date = ymd(paste(year, month, "1", sep = "-"))) %>% 
-  select(date, sales.gas)
+ eia.key <- Sys.getenv("EIA_API_KEY")
+  
+    
+  fn_query_eia <- function( api_url = NULL,
+    the_series_id, the_source = "steo", the_frequency = "monthly", the_facet = "seriesId",
+    the_offset = 0, the_length = 5000, the_eia_key = eia.key){
+    
+    if(is.null(api_url)){
+      the_url = "https://api.eia.gov/v2/"
+    
+      # Query must be no more than 5,000
+      if(the_length > 5000) break
+      
+      get_call <- paste0(the_url, the_source, "/data/?", paste(
+        paste0("frequency=", the_frequency), 
+        "data[0]=value", 
+        paste0("facets[", the_facet, "][]=", the_series_id), 
+        "sort[0][column]=period", 
+        "sort[0][direction]=desc", 
+        paste0("offset=", the_offset), 
+        paste0("length=", the_length),
+        sep = "&"
+      ))
+  
+      eia_list <- fromJSON(str_c(get_call, "&api_key=", the_eia_key))
+      
+      eia_data <- eia_list$response$data
+      
+      eia_data %>% 
+        as_tibble() %>% 
+        return()
+      }
+    
+    else{
+      
+      eia_list <- fromJSON(str_c(api_url, "&api_key=", the_eia_key))
+    
+      eia_data <- eia_list$response$data
+      
+      eia_data %>% 
+        as_tibble() %>% 
+        return()
+    
+    }
+  }
 
 ```
 
-Gasoline and diesel prices will be retrieved via the Federal Reserve Economics Database.
-
 ```{r}
 
-fred.data <- c(
-  "GASREGW", #"CUUR0000SETB01", "TRFVOLUSM227NFWA", 
-  "GASDESM"
-) %>% 
-  lapply(\(x){
-    fredr(x, frequency = "m")
-  }) %>% 
-  reduce(., bind_rows) %>% 
-  select(date, series_id, value) %>% 
-  pivot_wider(names_from = series_id, values_from = value) %>% 
-  rename(
-    gas.price = "GASREGW",
-    # cpi.gas = "CUUR0000SETB01", 
-    # miles.driven = "TRFVOLUSM227NFWA", 
-    diesel.price = "GASDESM"
-  )
+url.wind <- "https://api.eia.gov/v2/electricity/electric-power-operational-data/data/?frequency=monthly&data[0]=generation&facets[fueltypeid][]=AOR&facets[location][]=TX&facets[sectorid][]=99&sort[0][column]=period&sort[0][direction]=desc&offset=0&length=5000"
+
+data.wind.gen <- fn_query_eia(api_url = url.wind)
+
+data.price <- fn_query_eia(the_series_id = "ELWHU_TX", the_source = "steo", the_facet = "seriesId")
+
+data.wind.cf <- fn_query_eia(api_url = "https://api.eia.gov/v2/total-energy/data/?frequency=monthly&data[0]=value&facets[msn][]=WYCASUS&sort[0][column]=period&sort[0][direction]=desc&offset=0&length=5000")
 
 ```
 
@@ -93,15 +123,56 @@ The data is split into two datasets, a training and testing dataset. The testing
 
 ```{r}
 
+
+
+
 data <- left_join(
-  x = data.gas,
-  y = fred.data,
+  x = data.price %>% 
+    select(period, value) %>% 
+    rename(date = period, price = value) %>% 
+    mutate(date = ym(date) %>% yearmonth()),
+  y = data.wind.gen %>% 
+    select(period, generation) %>% 
+    rename(date = period) %>% 
+    mutate(date = ym(date) %>% yearmonth()),
   by = "date"
-)
+) %>% 
+  left_join(
+    y = data.wind.cf %>% 
+    select(period, value) %>% 
+    rename(date = period, capacity.factor = value) %>% 
+    mutate(date = ym(date) %>% yearmonth()),
+  by = "date"
+  ) %>% 
+  arrange(date) %>% 
+  mutate(
+    price_lag12 = lag(price, n = 12),
+    price_lag18 = lag(price, n = 18),
+    price_lag24 = lag(price, n = 24),
+    price_lag30 = lag(price, n = 30),
+    price_lag36 = lag(price, n = 36),
+    price_lag48 = lag(price, n = 48),
+    price_lag60 = lag(price, n = 60),
+    price_lag72 = lag(price, n = 72),
+    price_lag12_ma = rollmean(price, k = 12, fill = NA, align = "right") %>% lag(n = 12),
+    price_lag24_ma = rollmean(price, k = 24, fill = NA, align = "right") %>% lag(n = 24),
+    price_lag36_ma = rollmean(price, k = 36, fill = NA, align = "right") %>% lag(n = 36),
+    price_lag48_ma = rollmean(price, k = 48, fill = NA, align = "right") %>% lag(n = 48)
+  ) %>% 
+  drop_na()
+
+avg.capacity <- data %>% 
+  mutate(month = month(date)) %>% 
+  group_by(month) %>% 
+  summarize(capacity.factor = mean(capacity.factor)) %>% 
+  ungroup()
 
 test <- data %>% 
+  select(-capacity.factor) %>% 
   slice_max(order_by = date, n = 12) %>% 
-  mutate(date = yearmonth(date)) %>% 
+  mutate(date = yearmonth(date), month = month(date)) %>% 
+  left_join(avg.capacity, by = "month") %>% 
+  select(-month) %>% 
   tsibble()
 
 train <- data %>% 
@@ -110,54 +181,8 @@ train <- data %>%
   anti_join(y = test, by = "date") %>% 
   tsibble()
 
-
-```
-
-However, a true forecasts will not have gas and diesel prices available so we must adjust the test set for that. These prices will be estimated using a vector autoregression (VAR). 
-
-```{r}
-
-test.fx <- train %>% 
-  model(VAR(vars(gas.price, diesel.price))) %>% 
-  forecast(h = 12) 
-
-test.fx %>% 
-  autoplot(data %>% filter(year(date) > 2018) %>% tsibble())
-
-```
-
-Since gas and diesel prices are very difficult to forecast, we will consider a scenario forecasting approach with a low price (20th percentile), medium price (point estimate), and high price (80th percentile) scenarios. Despite actual prices being well above even the 95th percentile, the 80th percentile will be used and my knowledge of gas prices over the last 12 months shouldn't be a cause of bias. 
-
-```{r}
-
-test_all.scenarios <- test.fx %>% 
-  hilo(level = c(80)) %>% 
-  mutate(
-    gas.price_med = .mean[,"gas.price"],
-    gas.price_low = `80%`$gas.price$lower,
-    gas.price_high = `80%`$gas.price$upper,
-    
-    diesel.price_med = .mean[,"diesel.price"],
-    diesel.price_low = `80%`$diesel.price$lower,
-    diesel.price_high = `80%`$diesel.price$upper
-  ) %>% 
-  select(
-    date, gas.price_med, gas.price_high, gas.price_low, 
-    diesel.price_med, diesel.price_high, diesel.price_low
-  ) %>% 
-  left_join(x = test, by = "date")
-
-test.low <- test_all.scenarios %>% 
-  select(date, sales.gas, contains("low")) %>% 
-  rename_with(~str_replace_all(.x, "_low", ""))
-
-test.med <- test_all.scenarios %>% 
-  select(date, sales.gas, contains("med")) %>% 
-  rename_with(~str_replace_all(.x, "_med", ""))
-
-test.high <- test_all.scenarios %>% 
-  select(date, sales.gas, contains("high")) %>% 
-  rename_with(~str_replace_all(.x, "_high", ""))
+data <- data %>% 
+  tsibble(index = date)
 
 ```
 
@@ -167,83 +192,63 @@ test.high <- test_all.scenarios %>%
 
 ### Data Exploration
 
-#### Gasoline Station Sales Plots
-
-Gasoline station sales have been very volatile during the training set period, especially so since the COVID-19 pandemic started. The sales have been highly correlated with gas and diesel prices.
-
-```{r}
-#| fig-height: 4
-#| eval: false
-#| echo: false
-
-train %>% 
-  autoplot(sales.gas) +
-  ggtitle("Monthly Gas Station Sales in US") +
-  scale_y_continuous(labels = label_dollar())
-
-```
+#### Monthly Wind Generation in Texas
 
 ```{r}
 #| fig-height: 4
 
 train %>% 
-  # select(date, sales.gas, gas.price, miles.driven) %>% 
-  pivot_longer(-date) %>% 
-  ggplot(aes(x = date, y = value, color = name)) +
-  geom_line() +
-  facet_grid(name ~ ., scales = "free") +
-  scale_y_continuous(labels = label_dollar())
+  gg_tsdisplay(generation)
 
 ```
 
-Surprisingly, little if any seasonality exist in the series.
+#### Monthly Average Wholesale Electricity Price in Texas (log scale)
 
 ```{r}
 #| fig-height: 4
 
 train %>% 
-  gg_season(sales.gas) +
-  ggtitle("Seasonality Plot: Monthly Gas Station Sales in US") +
-  scale_y_continuous(labels = label_dollar())
+  gg_tsdisplay(log(price))
 
 ```
-
-
-
-The ACF and PACF also back this up with a low correlation against the 12-month lag.
-
-```{r}
-
-train %>% 
-  gg_tsdisplay(sales.gas, plot_type = "partial", lag_max = 36)
-
-```
-
 
 #### Decomposition
 
-The STL Decomposition does appear to find some seasonal component, though it may not be statistically significant. This is especially so since it appears the large dip in March 2020, a likely result of COVID-19 shutdowns, has affected the seasonal component. The seasonal window was forced to be periodic, resulting in an unchanging seasonal pattern since only 4 years of data exist in the training set.
+The STL Decomposition breaks out the data into the trend, season, and remainder components. The seasonality will largely be driven by wind though I would suspect repairs in the shoulder months playing a role. The trend will show the general increase in supply over time. The remainder will contain wind deviations from normal, unexpected turbine outages, and other unforeseeable factors.
 
 ```{r}
 
 train %>% 
-  model(STL(sales.gas ~ season(window = 'periodic'))) %>% 
+  model(STL(generation)) %>% 
   components() %>% 
   autoplot() +
-  scale_y_continuous(labels = label_dollar())
+  scale_y_continuous(labels = label_comma())
 
 ```
 
 
-#### Correlations with Gas Station Sales
+#### Correlations
+
+The 30-month lag appears to be the most correlated.
 
 ```{r}
 
 train %>% 
-  pivot_longer(-c(date, sales.gas)) %>% 
-  ggplot(aes(y = (sales.gas), x = (value), color = name)) +
+  pivot_longer(-c(date, generation, capacity.factor), names_to = "lag", values_to = "value") %>% 
+  ggplot(aes(
+    x = log(value),
+    # x = value,
+    y = box_cox(generation, .208),
+    # y = generation,
+    color = capacity.factor
+  )) +
   geom_point() +
-  facet_wrap(name ~ ., scales = "free")
+  geom_smooth(se = F, scales = "free", span = 2, color = "gray30") +
+  facet_wrap(lag ~ .) +
+  scale_color_viridis_c() +
+  theme(
+    legend.position = "bottom"
+  )
 
 ```
 
@@ -259,23 +264,33 @@ Four models will be estimated: an ETS, an auto-ARIMA, and an ARIMAX using gas an
 
 (fit <- train %>% 
   model(
-    "ets" = ETS(sales.gas),
-    "arima" = ARIMA((sales.gas)),
-    "dynamic" = ARIMA(sales.gas ~ gas.price + diesel.price)
-  ) %>% 
-   mutate(ensemble = (ets + arima + dynamic) / 3))
+    "ets" = ETS(box_cox(generation, .208)),
+    "arima" = ARIMA(box_cox(generation, .208) ~ log(price_lag12_ma) + log(price_lag24_ma) + log(capacity.factor)),
+    "nn" = NNETAR(
+      box_cox(generation, .208) ~ log(price_lag24_ma) + log(price_lag36_ma) + (capacity.factor), #+ 
+        # price_lag18 + price_lag24 + 
+        # AR(P = 1),
+      n_nodes = 3, scale_inputs = TRUE
+    ),
+    "nn2" = NNETAR(
+      box_cox(generation, .208) ~ log(price_lag24_ma) + log(price_lag36_ma) + (capacity.factor) + 
+        price_lag30, # + price_lag24, #+
+        # AR(P = 1),
+      n_nodes = 5, scale_inputs = TRUE
+    )
+  )) #%>% 
+   # mutate(ensemble = (ets + arima + nn) / 3))
 
 
 ```
-
-
 
 ```{r}
-fit %>% 
-  select(-ensemble) %>% 
-  glance()
-```
 
+fit %>% 
+  select(arima) %>% 
+  report()
+
+```
 
 
 ## Forecast
@@ -283,67 +298,26 @@ fit %>%
 The models were trained on data prior to `r max(as.Date(train$date)) + months(1)`. The forecast period is the interval `r lubridate::interval(min(as.Date(test$date)), max(as.Date(test$date)))`. Three forecasts are produced from each model, one from each of the three scenarios (low, medium, and high).
 
 
-### High
-
-Given the historically high gas and diesel prices during the test set, the high scenario will most likely produce the best forecast. However, as shown below the forecast does underestimate total sales by a considerable amount.
-
 ```{r}
 
-fx.high <- fit %>% 
-        forecast(test.high)
+fx <- fit %>% 
+    forecast(test, times = 100)
   
 
-  fx.high %>% 
-    autoplot(
-        # data %>% filter(year(date)>2020),
-        level = NULL, size = .75, alpha = .75
-      ) +
-    autolayer(
-      data %>% tsibble() %>% filter(year(date)>2020), sales.gas, 
-      size = 1, alpha = .75#, linetype = "dashed"
-    ) +
-    ggtitle("US Gas Station Sales Out-of-Sample Forecast, High Scenario") + 
-    scale_color_viridis_d() +
-    scale_y_continuous(labels = label_dollar())
-  
-
-
-```
-
-The dynamic model does produce a slightly better forecast with an RMSE of $8,624. 
-
-```{r}
-
-fx.high %>% 
-  accuracy(test.high, measures = list(point_accuracy_measures, distribution_accuracy_measures)) %>% 
-  arrange(RMSE)
-
-```
-
-
-
-### Medium
-
-The medium scenario performs very poorly because of the large deviation of actual versus medium gas/diesel prices.
-
-```{r}
-
-fx.med <- fit %>% 
-        forecast(test.med)
-  
-
-fx.med %>% 
+fx %>% 
   autoplot(
       # data %>% filter(year(date)>2020),
       level = NULL, size = .75, alpha = .75
     ) +
   autolayer(
-    data %>% tsibble() %>% filter(year(date)>2020), sales.gas, 
+    data %>% tsibble() %>% filter(year(date)>=2020), generation, 
     size = 1, alpha = .75#, linetype = "dashed"
   ) +
-  ggtitle("US Gas Station Sales Out-of-Sample Forecast, Medium Scenario") + 
-  scale_color_viridis_d() +
-  scale_y_continuous(labels = label_dollar())
+  ggtitle("Texas Wind Generation Out-of-Sample Forecast") + 
+  # scale_color_viridis_d() +
+  scale_y_continuous(labels = label_comma()); fx %>% 
+  accuracy(test, measures = point_accuracy_measures) %>% 
+  arrange(RMSE)
 
 ```
 
@@ -351,49 +325,77 @@ The ETS model performs best by a large margin with an RMSE of $8,674.
 
 ```{r}
 
-fx.med %>% 
-  accuracy(test.med, measures = list(point_accuracy_measures, distribution_accuracy_measures)) %>% 
+fx %>% 
+  accuracy(test, measures = list(point_accuracy_measures, distribution_accuracy_measures)) %>% 
   arrange(RMSE)
 
 ```
 
-
-### Low
-
-The low scenario is a very poor forecast. The ETS model once again does best since it does not use any exogenous regressors.
+## Cross Validation
 
 ```{r}
 
-fx.low <- fit %>% 
-        forecast(test.low)
-  
+train.cv <- train %>% 
+  stretch_tsibble(.init = 12, .step = 3)
 
-  fx.low %>% 
-    autoplot(
-        # data %>% filter(year(date)>2020),
-        level = NULL, size = .75, alpha = .75
-      ) +
-    autolayer(
-      data %>% tsibble() %>% filter(year(date)>2020), sales.gas, 
-      size = 1, alpha = .75#, linetype = "dashed"
-    ) +
-    ggtitle("US Gas Station Sales Out-of-Sample Forecast, low Scenario") + 
-    scale_color_viridis_d() +
-    scale_y_continuous(labels = label_dollar())
+train.cv$.id %>% max()
+
+```
+
+
+```{r}
+
+(fit.cv <- train.cv %>% 
+  model(
+    "nn2" = NNETAR(
+      box_cox(generation, .208) ~ log(price_lag24_ma) + log(price_lag36_ma) + (capacity.factor), #+ 
+        # price_lag18 + price_lag24 + 
+        # AR(P = 1),
+      n_nodes = 2, scale_inputs = TRUE
+    ),
+     "nn3" = NNETAR(
+      box_cox(generation, .208) ~ log(price_lag24_ma) + log(price_lag36_ma) + (capacity.factor), #+ 
+        # price_lag18 + price_lag24 + 
+        # AR(P = 1),
+      n_nodes = 3, scale_inputs = TRUE
+    ),
+     "nn4" = NNETAR(
+      box_cox(generation, .208) ~ log(price_lag24_ma) + log(price_lag36_ma) + (capacity.factor), #+ 
+        # price_lag18 + price_lag24 + 
+        # AR(P = 1),
+      n_nodes = 4, scale_inputs = TRUE
+    ),
+     "nn5" = NNETAR(
+      box_cox(generation, .208) ~ log(price_lag24_ma) + log(price_lag36_ma) + (capacity.factor), #+ 
+        # price_lag18 + price_lag24 + 
+        # AR(P = 1),
+      n_nodes = 5, scale_inputs = TRUE
+    ),
+     "nn8" = NNETAR(
+      box_cox(generation, .208) ~ log(price_lag24_ma) + log(price_lag36_ma) + (capacity.factor), #+ 
+        # price_lag18 + price_lag24 + 
+        # AR(P = 1),
+      n_nodes = 8, scale_inputs = TRUE
+    ),
+     "nn15" = NNETAR(
+      box_cox(generation, .208) ~ log(price_lag24_ma) + log(price_lag36_ma) + (capacity.factor), #+ 
+        # price_lag18 + price_lag24 + 
+        # AR(P = 1),
+      n_nodes = 15, scale_inputs = TRUE
+    )
+    )
+  ) #%>% 
+   # mutate(ensemble = (ets + arima + nn) / 3))
 
 ```
 
 ```{r}
 
-fx.low %>% 
-  accuracy(test.low, measures = list(point_accuracy_measures, distribution_accuracy_measures)) %>% 
-  arrange(RMSE)
+fit.cv %>% 
+  forecast(train.cv, times = 100) %>% 
+  accuracy(train.cv)
 
 ```
-
-
-While averaging forecasts usually creates a better estimate, it performs poorly due to the poor models used in the evaluation.
-
 
 
 ## Bagged Forecasts
