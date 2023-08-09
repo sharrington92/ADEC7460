@@ -16,17 +16,18 @@ editor_options:
 
 ## Introduction
 
-I'll be using data from the EIA to predict wind generation in Texas using prices. Theory would indicate that higher prices will incentivize more electricity production. Because wind turbines are relatively cheap to build and Texas' unique electricity market enables a wide number of suppliers to join the market, it would make sense for prices to be a predictor of wind turbine generation.
+I'll be using data from the EIA to predict wind generation in Texas using historical market prices. Theory suggests that higher prices will incentivize an increase in supply, i.e. more electricity production. Because wind turbines are relatively cheap to build and Texas' unique electricity market enables a wide number of suppliers to join the market, it would make sense for prices to be a good predictor of wind turbine generation in this region.
 
-One source of volatility that could diminish this relation would be the variation of wind. I was unable to find wind data for Texas, but an alternative data series that could fit is capacity factor. This is defined as $\frac{Average MWh}{Total Capacity}$. When prices are positive (and above marginal cost $\approx$ 0), wind turbines will generate as long as there is wind. Thus while a drop in capacity factor could be due to negative pricing, it is much more likely to be from a decrease in wind. 
+One source of volatility that could hide this relation would be the variation of monthly winds. I was unable to find historical wind data for Texas, but an alternative data series that could work as a replacement is capacity factor. This is defined as $\frac{Average MWh}{Total MW Capacity}$. When prices are positive (or above marginal cost $\approx$ $0), wind turbines will generate as much electricity as possible. Thus while a drop in capacity factor could be due to negative pricing, it is much more likely to be from a lack of wind. 
 
 ```{r}
 #| echo: false
 
-if(!str_detect(basename(getwd()), "Time Series") & str_detect(dirname(getwd()), "Time Series")){
+if(!stringr::str_detect(basename(getwd()), "Time Series") &
+   stringr::str_detect(dirname(getwd()), "Time Series")){
   repeat{
     setwd("../")
-    if(str_detect(basename(getwd()), "Time Series")){
+    if(stringr::str_detect(basename(getwd()), "Time Series")){
       break
     }
   }
@@ -113,13 +114,17 @@ url.wind <- "https://api.eia.gov/v2/electricity/electric-power-operational-data/
 
 data.wind.gen <- fn_query_eia(api_url = url.wind)
 
-data.price <- fn_query_eia(the_series_id = "ELWHU_TX", the_source = "steo", the_facet = "seriesId")
+data.price <- fn_query_eia(
+  the_series_id = "ELWHU_TX", the_source = "steo", the_facet = "seriesId"
+)
 
 data.wind.cf <- fn_query_eia(api_url = "https://api.eia.gov/v2/total-energy/data/?frequency=monthly&data[0]=value&facets[msn][]=WYCASUS&sort[0][column]=period&sort[0][direction]=desc&offset=0&length=5000")
 
 ```
 
-The data is split into two datasets, a training and testing dataset. The testing set are the most recent 12 months, while the training set are the 48 months preceding that. 
+The data is split into two datasets, a training and testing dataset. The testing set are the most recent 12 months, while the training set are the 48 months preceding that. Lags of monthly market prices will be used, however, market entrants will likely be more interested in pricing trends rather than price shocks, so lagged rolling averages will also be calculated.
+
+The wind turbine capacity factor will be unknown for the forecast period and the monthly averages of the training set will be used for this period. The inclusion of this variable will be to help explain some of the variation in the test set so more representative weights or coefficients for prices may be estimated.
 
 ```{r prep_data}
 
@@ -152,12 +157,14 @@ data <- left_join(
     price_lag30 = lag(price, n = 30),
     price_lag36 = lag(price, n = 36),
     price_lag48 = lag(price, n = 48),
-    price_lag60 = lag(price, n = 60),
-    price_lag72 = lag(price, n = 72),
-    price_lag12_ma = rollmean(price, k = 12, fill = NA, align = "right") %>% lag(n = 12),
-    price_lag24_ma = rollmean(price, k = 24, fill = NA, align = "right") %>% lag(n = 24),
-    price_lag36_ma = rollmean(price, k = 36, fill = NA, align = "right") %>% lag(n = 36),
-    price_lag48_ma = rollmean(price, k = 48, fill = NA, align = "right") %>% lag(n = 48)
+    price_lag12_ma = rollmean(price, k = 12, fill = NA, align = "right") %>% 
+      lag(n = 12),
+    price_lag24_ma = rollmean(price, k = 24, fill = NA, align = "right") %>% 
+      lag(n = 24),
+    price_lag36_ma = rollmean(price, k = 36, fill = NA, align = "right") %>% 
+      lag(n = 36),
+    price_lag48_ma = rollmean(price, k = 48, fill = NA, align = "right") %>% 
+      lag(n = 48)
   ) %>% 
   drop_na()
 
@@ -199,7 +206,7 @@ data <- data %>%
 #| fig-width: 8
 
 train %>% 
-  gg_tsdisplay(generation)
+  gg_tsdisplay(generation, lag_max = 24)
 
 ```
 
@@ -210,7 +217,7 @@ train %>%
 #| fig-width: 8
 
 train %>% 
-  gg_tsdisplay(log(price))
+  gg_tsdisplay(log(price), lag_max = 24)
 
 ```
 
@@ -231,16 +238,19 @@ train %>%
 ```
 
 
-#### Correlations
+#### Correlations with Lags of Price
 
-The 30-month lag appears to be the most correlated.
+Various outliers skew a linear fit between lags of price and wind generation. Many of these outliers are months with low capacity factors/wind. Looking past the outliers, the lags 30 and 36 do appear more correlated, but still rather loosely.
 
 ```{r plot_correl}
 #| fig-height: 8
 
 
 train %>% 
-  pivot_longer(-c(date, generation, capacity.factor), names_to = "lag", values_to = "value") %>% 
+  pivot_longer(
+    -c(date, generation, capacity.factor, contains("ma")), 
+    names_to = "lag", values_to = "value"
+  ) %>% 
   ggplot(aes(
     x = log(value),
     # x = value,
@@ -249,7 +259,32 @@ train %>%
     color = capacity.factor
   )) +
   geom_point() +
-  geom_smooth(se = F, scales = "free", span = 2, color = "gray30") +
+  geom_smooth(method = "lm", se = F, scales = "free", color = "gray30") +
+  facet_wrap(lag ~ .) +
+  scale_color_viridis_c() +
+  theme(
+    legend.position = "bottom"
+  )
+
+```
+
+Including lagged 12-month moving averages cleans up much of the price volatility. The 24-month lag shows the most significant correlation with negative correlation appearing after. The negative correlation is likely the opposite affect occurring: increased supply places a downward pressure on prices. 
+
+```{r plot_correl}
+#| fig-height: 8
+
+
+train %>% 
+  pivot_longer(c( contains("ma")), names_to = "lag", values_to = "value") %>% 
+  ggplot(aes(
+    x = log(value),
+    # x = value,
+    y = box_cox(generation, .208),
+    # y = generation,
+    color = capacity.factor
+  )) +
+  geom_point() +
+  geom_smooth(method = "lm", se = F, scales = "free", color = "gray30") +
   facet_wrap(lag ~ .) +
   scale_color_viridis_c() +
   theme(
@@ -259,11 +294,12 @@ train %>%
 ```
 
 
+
 ## Modeling
 
 ### Estimation
 
-Four models will be estimated: an ETS, an auto-ARIMA, and an ARIMAX using gas and diesel prices as regressors. The fourth model will be a simple average of the others. 
+Three models will be estimated: an ETS, an auto-ARIMA, and a neural network with 4 nodes. A fourth ensemble model will be a simple average of the others. 
 
 ```{r est_fit}
 
@@ -271,29 +307,27 @@ Four models will be estimated: an ETS, an auto-ARIMA, and an ARIMAX using gas an
 (fit <- train %>% 
   model(
     "ets" = ETS(box_cox(generation, .208)),
-    "arima" = ARIMA(box_cox(generation, .208) ~ log(price_lag12_ma) + log(price_lag24_ma) + log(capacity.factor)),
-    "nn2" = NNETAR(
-      box_cox(generation, .208) ~ log(price_lag24_ma) + log(price_lag36_ma) + (capacity.factor), #+ 
-        # price_lag18 + price_lag24 + 
-        # AR(P = 1),
-      n_nodes = 2, scale_inputs = TRUE
+    "arima" = ARIMA(
+      box_cox(generation, .208) ~ log(price_lag12_ma) +
+        log(price_lag24_ma) + log(price_lag36_ma) +
+        log(capacity.factor)
     ),
-    "nn5" = NNETAR(
-      box_cox(generation, .208) ~ log(price_lag24_ma) + log(price_lag36_ma) + (capacity.factor) + 
-        price_lag30, # + price_lag24, #+
-        # AR(P = 1),
-      n_nodes = 5, scale_inputs = TRUE
+    "nn" = NNETAR(
+      box_cox(generation, .208) ~ log(price_lag12_ma) + 
+        (capacity.factor), 
+      n_nodes = 4, scale_inputs = TRUE
     )
   ) %>% 
-   mutate(ensemble = (ets + arima + nn2) / 3))
+   mutate(ensemble = (ets + arima + nn) / 3))
+
+
   
 
 ```
 
-```{r}
-#| eval: false
-#| echo: false
+The coefficients of the ARIMA model show how generation has responded to historical prices for the training set. The 24 and 36 month lagged moving averages show a positive correlation while the closer 12 month lag has a negative correlation. However, it's worth pointing out that the standard errors on these are quite large so any statistical significance is doubtful.
 
+```{r}
 
 fit %>% 
   select(arima) %>% 
@@ -306,12 +340,12 @@ fit %>%
 
 The models were trained on data prior to `r max(as.Date(train$date)) + months(1)`. The forecast period is the interval `r lubridate::interval(min(as.Date(test$date)), max(as.Date(test$date)))`. 
 
-For the forecast period, the average capacity factor by month will be used along with lagged transformations of price. Two neural net models are included, one with 2 nodes and the other with 5. 
+For the forecast period, the average capacity factor by month will be used along with lagged transformations of price. 
 
 ```{r make_forecast}
 
 fx <- fit %>% 
-    forecast(test, times = 50)
+    forecast(test, times = 500)
   
 
 fx %>% 
@@ -329,24 +363,17 @@ fx %>%
 
 ```
 
-The ensemble model outperforms the rest, likely a result of the forecasts not being biased one way or the other in comparison to the actual generation. The ARIMA is next and the remaining neural nets and ETS clustered at the bottom.
-
-```{r fx_accuracy}
-
-fx %>% 
-  accuracy(test, measures = list(point_accuracy_measures, distribution_accuracy_measures)) %>% 
-  arrange(RMSE)
-
-```
+The ensemble model outperforms the rest, likely a result of the forecasts not being biased one way or the other in comparison to the actual generation. The ARIMA and NN models are very comparable and the ETS is at the bottom. 
 
 ### Cross Validation
 
-One issue with neural networks is selecting the appropriate number of nodes. One way this can be handled is through cross validation. By splitting the dataset into various components and training models on each of these, we can compare how each does over multiple out-of-sample forecasts. We'll split the training set into 9 different parts and train neural nets with 2, 3, 4, 5, 6, 7, and 8 nodes to determine which would perform best on average. 
+One issue with neural networks is selecting the appropriate number of nodes. One way this can be handled is through cross validation. By splitting the dataset into various components and training models on each of these, we can compare how each does over multiple out-of-sample forecasts. We'll split the training set into 9 segments and train neural nets with 2, 3, 4, 5, 6, 7, and 8 nodes to determine which would perform best on average. 
 
 ```{r cv_data}
 
 train.cv <- train %>% 
-  stretch_tsibble(.init = 18, .step = 3)
+  stretch_tsibble(.init = 24, .step = 1) %>% 
+  relocate(.id, everything())
 
 train.cv$.id %>% max()
 
@@ -358,65 +385,110 @@ train.cv$.id %>% max()
 (fit.cv <- train.cv %>% 
   model(
     "nn2" = NNETAR(
-      box_cox(generation, .208) ~ log(price_lag24_ma) + log(price_lag36_ma) + (capacity.factor), #+ 
-        # price_lag18 + price_lag24 + 
-        # AR(P = 1),
+      box_cox(generation, .208) ~ log(price_lag12_ma) + 
+        (capacity.factor), 
       n_nodes = 2, scale_inputs = TRUE
     ),
      "nn3" = NNETAR(
-      box_cox(generation, .208) ~ log(price_lag24_ma) + log(price_lag36_ma) + (capacity.factor), #+ 
-        # price_lag18 + price_lag24 + 
-        # AR(P = 1),
+      box_cox(generation, .208) ~ log(price_lag12_ma) + 
+        (capacity.factor), 
       n_nodes = 3, scale_inputs = TRUE
     ),
      "nn4" = NNETAR(
-      box_cox(generation, .208) ~ log(price_lag24_ma) + log(price_lag36_ma) + (capacity.factor), #+ 
-        # price_lag18 + price_lag24 + 
-        # AR(P = 1),
+      box_cox(generation, .208) ~ log(price_lag12_ma) + 
+        (capacity.factor), 
       n_nodes = 4, scale_inputs = TRUE
     ),
      "nn5" = NNETAR(
-      box_cox(generation, .208) ~ log(price_lag24_ma) + log(price_lag36_ma) + (capacity.factor), #+ 
-        # price_lag18 + price_lag24 + 
-        # AR(P = 1),
+      box_cox(generation, .208) ~ log(price_lag12_ma) + 
+        (capacity.factor), 
       n_nodes = 5, scale_inputs = TRUE
     ),
      "nn6" = NNETAR(
-      box_cox(generation, .208) ~ log(price_lag24_ma) + log(price_lag36_ma) + (capacity.factor), #+ 
-        # price_lag18 + price_lag24 + 
-        # AR(P = 1),
+      box_cox(generation, .208) ~ log(price_lag12_ma) + 
+        (capacity.factor), 
       n_nodes = 6, scale_inputs = TRUE
     ),
      "nn7" = NNETAR(
-      box_cox(generation, .208) ~ log(price_lag24_ma) + log(price_lag36_ma) + (capacity.factor), #+ 
-        # price_lag18 + price_lag24 + 
-        # AR(P = 1),
+      box_cox(generation, .208) ~ log(price_lag12_ma) + 
+        (capacity.factor), 
       n_nodes = 7, scale_inputs = TRUE
     ),
      "nn8" = NNETAR(
-      box_cox(generation, .208) ~ log(price_lag24_ma) + log(price_lag36_ma) + (capacity.factor), #+ 
-        # price_lag18 + price_lag24 + 
-        # AR(P = 1),
+     box_cox(generation, .208) ~ log(price_lag12_ma) + 
+        (capacity.factor), 
       n_nodes = 8, scale_inputs = TRUE
-    )
-    )
+    ),
+     "nn9" = NNETAR(
+     box_cox(generation, .208) ~ log(price_lag12_ma) + 
+        (capacity.factor), 
+      n_nodes = 9, scale_inputs = TRUE
+    ),
+     "nn10" = NNETAR(
+     box_cox(generation, .208) ~ log(price_lag12_ma) + 
+        (capacity.factor), 
+      n_nodes = 10, scale_inputs = TRUE
+    ))
   )
 
 ```
 
-Cross validation suggests the simple 2-node network has a lower median RMSE than the others.
+To evaluate the cross validated error
+
+ 
 
 ```{r fx_cv}
 
 fx.cv <- fit.cv %>% 
-  forecast(train.cv, times = 10) 
+  forecast(
+    new_data(train.cv, n = 12) %>% left_join(data, by = "date") %>% drop_na(), 
+    times = 100
+  )
+
+ 
 
 fx.cv %>% 
-  mutate(.model = factor(.model, levels = paste("nn", c(2:8), sep = ""))) %>% 
-  accuracy(train.cv) %>% 
+  accuracy(data, by = c(".model", ".id")) %>% 
+  mutate(.model = factor(.model, levels = paste("nn", c(2:10), sep = ""))) %>% 
   ggplot(aes(x = RMSE, y = .model)) +
-  geom_boxplot()
+  geom_boxplot(outlier.shape = NA) + 
+  geom_jitter(aes(color = .model), width = .2, size = 3, alpha = .5) + 
+  scale_x_continuous(labels = label_comma()) +
+  ylab("Number of Nodes")
 
 ```
 
+Cross validation has found the model with 6 nodes to minimize the median RMSE, however the variance on that error is quite large. With that consideration, it may be best to choose the model with 7  nodes as the median RMSE is comparable, but the variance is much lower.
+
+However, despite all that, the model performs worse on the test dataset than any of the other models tested.
+
+```{r}
+
+(fit.final <- train %>% 
+  model(
+    "nn_final" = NNETAR(
+      box_cox(generation, .208) ~ log(price_lag12_ma) + 
+        (capacity.factor), 
+      n_nodes = 7, scale_inputs = TRUE
+    )))
+
+fx.final <- fit.final %>% 
+  forecast(test, times = 500)
+
+
+fx.final %>% 
+  autoplot(
+      level = NULL, size = .75, alpha = .75, color = "red3"
+    ) +
+  autolayer(
+    data %>% tsibble() %>% filter(year(date)>=2020), generation, 
+    size = 1, alpha = .75#, linetype = "dashed"
+  ) +
+  autolayer(fx, level = NULL, linewidth = .5, alpha = .5) +
+  ggtitle("Texas Wind Generation Out-of-Sample Forecast") + 
+  scale_y_continuous(labels = label_comma()); fx.final %>% 
+  accuracy(test, measures = point_accuracy_measures) %>% 
+  arrange(RMSE)
+
+```
 
