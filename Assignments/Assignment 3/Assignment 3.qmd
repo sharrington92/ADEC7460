@@ -260,7 +260,7 @@ train %>%
   )) +
   geom_point() +
   geom_smooth(method = "lm", se = F, scales = "free", color = "gray30") +
-  facet_wrap(lag ~ .) +
+  facet_wrap(lag ~ ., scales = "free") +
   scale_color_viridis_c() +
   theme(
     legend.position = "bottom"
@@ -270,7 +270,7 @@ train %>%
 
 Including lagged 12-month moving averages cleans up much of the price volatility. The 24-month lag shows the most significant correlation with negative correlation appearing after. The negative correlation is likely the opposite affect occurring: increased supply places a downward pressure on prices. 
 
-```{r plot_correl}
+```{r plot_correl_ma}
 #| fig-height: 8
 
 
@@ -285,7 +285,7 @@ train %>%
   )) +
   geom_point() +
   geom_smooth(method = "lm", se = F, scales = "free", color = "gray30") +
-  facet_wrap(lag ~ .) +
+  facet_wrap(lag ~ ., scales = "free") +
   scale_color_viridis_c() +
   theme(
     legend.position = "bottom"
@@ -382,7 +382,7 @@ train.cv$.id %>% max()
 
 ```{r fit_cv}
 
-(fit.cv <- train.cv %>% 
+fit.cv <- train.cv %>% 
   model(
     "nn2" = NNETAR(
       box_cox(generation, .208) ~ log(price_lag12_ma) + 
@@ -429,20 +429,20 @@ train.cv$.id %>% max()
         (capacity.factor), 
       n_nodes = 10, scale_inputs = TRUE
     ))
-  )
 
 ```
 
-To evaluate the cross validated error
+To evaluate the cross validated error, predictions will be made on the 12 months following each data partition. 
 
  
 
 ```{r fx_cv}
+#| fig-height: 8
 
 fx.cv <- fit.cv %>% 
   forecast(
     new_data(train.cv, n = 12) %>% left_join(data, by = "date") %>% drop_na(), 
-    times = 100
+    times = 50
   )
 
  
@@ -454,13 +454,15 @@ fx.cv %>%
   geom_boxplot(outlier.shape = NA) + 
   geom_jitter(aes(color = .model), width = .2, size = 3, alpha = .5) + 
   scale_x_continuous(labels = label_comma()) +
-  ylab("Number of Nodes")
+  ylab("Number of Nodes") +
+  theme(legend.position = "none")
+
 
 ```
 
-Cross validation has found the model with 6 nodes to minimize the median RMSE, however the variance on that error is quite large. With that consideration, it may be best to choose the model with 7  nodes as the median RMSE is comparable, but the variance is much lower.
+Cross validation has found the model with 8 nodes to minimize the median RMSE and it also has a much smaller variance than most other models.
 
-However, despite all that, the model performs worse on the test dataset than any of the other models tested.
+A final model will be fit using all the training data to predict the test set.
 
 ```{r}
 
@@ -469,7 +471,7 @@ However, despite all that, the model performs worse on the test dataset than any
     "nn_final" = NNETAR(
       box_cox(generation, .208) ~ log(price_lag12_ma) + 
         (capacity.factor), 
-      n_nodes = 7, scale_inputs = TRUE
+      n_nodes = 8, scale_inputs = TRUE
     )))
 
 fx.final <- fit.final %>% 
@@ -492,3 +494,4 @@ fx.final %>%
 
 ```
 
+However, despite all that, the model performs worse on the test dataset than any of the other models tested.
