@@ -154,26 +154,28 @@
       )) %>% #filter(!is.na(total_cases)) %>% cor(use = 'complete.obs')
       # select(total_cases, contains("_sa")) %>% 
       select(
-        total_cases, cases_cumulative, 
-        hdd_reanalysis_365d_sa, hdd_reanalysis_365d,
-        hdd_station_4w_sa, 
-        hdd_station_365d, hdd_station_365d_sa,
-        precip_4w, precip_365d_sa,
-        PC20, PC15,
-        station_diur_temp_rng_c
+        total_cases, cases_cumulative, case_rate, contains("susc"), population,
+        # hdd_reanalysis_365d_sa, hdd_reanalysis_365d,
+        # hdd_station_4w_sa, 
+        # hdd_station_365d, hdd_station_365d_sa,
+        # precip_4w, precip_365d_sa,
+        # PC20, PC15,
+        # station_diur_temp_rng_c
       ) %>% 
       mutate(
-        PC20 = PC20 %>% lag(n = 1) %>% difference(),
-        PC15 = PC15 %>% lag(n = 6),
-        station_diur_temp_rng_c
-      ) %>% 
-      pivot_longer(-c(total_cases, cases_cumulative)) %>% 
+        # PC20 = PC20 %>% lag(n = 1) %>% difference(),
+        # PC15 = PC15 %>% lag(n = 6),
+        # station_diur_temp_rng_c
+        across(contains("susc"), \(x){lag(log(x / (population - x)), n = 1)})
+      ) %>%
+      pivot_longer(-c(total_cases, cases_cumulative, case_rate)) %>% 
       slice_sample(prop = .25) %>% 
       ggplot(aes(
         # x = box_cox(value, 1), 
         x = value, # %>% lag(5),
         # y = box_cox(total_cases, 1), 
-        y = box_cox(cases_cumulative, lambda.iq_cum) %>% difference(),
+        # y = box_cox(cases_cumulative, lambda.iq_cum) %>% difference(),
+        y = log(case_rate), 
         color = name
       )) +
       geom_point() +
