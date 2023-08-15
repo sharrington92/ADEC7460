@@ -32,6 +32,40 @@ source(file.path("00_Setup.R"))
 
 ## Data Exploration
 
+### Time Plots
+
+```{r}
+
+train %>% 
+  autoplot(total_cases)
+
+```
+
+```{r}
+
+train %>% 
+  autoplot(case_rate)
+
+```
+
+
+```{r}
+
+train %>% 
+  autoplot(cases_cumulative / population)
+
+```
+
+
+
+```{r}
+
+train %>% 
+  autoplot(log(rollsum(total_cases, k = 8, fill = NA, align = "right") / population))
+
+```
+
+
 
 ## Modeling
 
@@ -352,7 +386,7 @@ Estimation
   filter(cases_cumulative > 10) %>% 
   model(
     fit3a = NNETAR(scale_inputs = TRUE, n_networks = 30, 
-      box_cox(total_cases, .15) ~ 1 #+ weekofyear #+ fourier(K = 1) 
+      box_cox(case_rate, .85) ~ 1 #+ weekofyear #+ fourier(K = 1) 
       + hdd_reanalysis_365d
       + humidity_rel_avg_4w
       + humidity_rel_avg_2w
@@ -361,17 +395,20 @@ Estimation
       + reanalysis_tdtr_k
       # + ndvi_ne + ndvi_nw + ndvi_se + ndvi_sw
       + hdd_station_4w
+      + log(susc.26w / (population - susc.26w))
+      + log(susc.8w / (population - susc.8w))
     ),
     fit3b = NNETAR(scale_inputs = TRUE, n_networks = 30, 
-      box_cox(total_cases, .15) ~ 1 #+ weekofyear #+ fourier(K = 1) 
+      box_cox(case_rate, .85) ~ 1 #+ weekofyear #+ fourier(K = 1) 
       + hdd_reanalysis_365d
       + humidity_rel_avg_4w
       + humidity_rel_avg_2w
       + precip_4w + precip_365d
       + station_diur_temp_rng_c
-      # + reanalysis_tdtr_k
+      + reanalysis_tdtr_k
       # + ndvi_ne_sa + ndvi_nw_sa + ndvi_se_sa + ndvi_sw_sa
       + hdd_station_4w
+      + susc.26w + susc.8w
     )
   ))
 
@@ -394,24 +431,25 @@ Forecast
 fx3.iq <- fit3.iq %>% 
   forecast(
     # train.all %>% drop_na() %>% filter(year > 2006),
-    valid,
+    valid %>% filter(city == "iq"),
     times = 50
   )
 
 # fx3.iq$predicted_cases <- fn_cumulative_to_week(fx3.iq, "iq", train.all, 1)
+fx3.iq$predicted_cases <- fx3.iq$.mean * fx3.iq$population
 
 (fx3.iq_accuracy <- fx3.iq %>% 
   fabletools::accuracy(valid))
 
-# (fx3.iq_mae_cases <- mae_vec(
-#   # train.all %>% drop_na() %>% filter(year >2005) %>% filter(city == "iq") %>% pull(total_cases), 
-#   valid %>% filter(city == "iq") %>% pull(total_cases), 
-#   fx3.iq$predicted_cases
-# ))
+(fx3.iq_mae_cases <- mae_vec(
+  # train.all %>% drop_na() %>% filter(year >2005) %>% filter(city == "iq") %>% pull(total_cases),
+  valid %>% filter(city == "iq") %>% pull(total_cases),
+  fx3.iq %>% filter(.model == "fit3a") %>% pull(predicted_cases)
+))
 
 fx3.iq %>% 
   autoplot(valid, level = NULL) + 
-  autolayer(train.all %>% filter(city == "iq", year >= 2007), total_cases)
+  autolayer(train.all %>% filter(city == "iq", year >= 2007), case_rate)
 
 ```
 
@@ -420,10 +458,10 @@ fx3.iq %>%
 
 fx3.iq %>% 
   as_tibble() %>% 
-  select(yearweek, total_cases, predicted_cases) %>% 
+  select(yearweek, .model, total_cases, predicted_cases) %>% 
   rename(actual_cases = total_cases) %>% 
-  pivot_longer(-yearweek, names_to = "Series") %>% 
-  ggplot(aes(x = yearweek, y = value, color = Series)) +
+  pivot_longer(-c(yearweek, .model), names_to = "Series") %>% 
+  ggplot(aes(x = yearweek, y = value, color = interaction(Series, .model))) +
   geom_line() +
   theme(
     legend.position = c(1, .9),
@@ -526,7 +564,7 @@ fx3.sj %>%
 
 
 
-### Modeltime
+### Model 4: Modeltime
 
 #### Iquitos
 
@@ -536,30 +574,40 @@ fx3.sj %>%
 
 recipe_spec <- train %>%
   as_tibble() %>% 
-  recipe(total_cases_trans_bc.7 ~ ., data = .) %>% 
+  recipe(total_cases ~ ., data = .) %>%
+  # recipe(case_rate ~ ., data = .) %>% 
   step_filter(city == "iq") %>% 
   step_timeseries_signature(week_start_date) %>% 
   step_rm(
     any_of(c(
       setdiff(vars.id, c("weekofyear", "week_start_date")), 
-      setdiff(vars.y, "total_cases_trans_bc.7")
+      setdiff(vars.y, "total_cases")
     )),
     contains("PC")
   ) %>% 
   step_rm(
     contains("am.pm"), contains("hour"), contains("minute"),
-    contains("second"), contains("xts"), contains("day")
+    contains("second"), contains("xts"), contains("day"), contains("susc")
   ) %>% 
-  step_fourier(week_start_date, period = 52, K = 5) %>% 
-  step_dummy(all_nominal_predictors()) %>% 
-  step_lag(all_numeric_predictors(), lag = 1:10) %>% 
-  # step_box_cox(cases_cumulative) %>% 
-  # step_diff(cases_cumulative, role = "outcome") %>% 
-  step_normalize(all_numeric_predictors()) %>% 
-  step_naomit(all_predictors(), total_cases_trans_bc.7)
+  step_fourier(week_start_date, period = 52, K = 5) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_lag(all_numeric_predictors(), lag = 1:10) %>%
+  # step_box_cox(cases_cumulative) %>%
+  # step_diff(cases_cumulative, role = "outcome") %>%
+  step_normalize(all_numeric_predictors()) %>%
+  step_diff(contains("_sa")) %>% 
+  # timetk::step_smooth(
+  #     # all_numeric_predictors(),
+  #     period = 5,
+  #     precipitation_amt_mm, reanalysis_air_temp_k, reanalysis_avg_temp_k,
+  #     reanalysis_min_air_temp_k, reanalysis_precip_amt_kg_per_m2,
+  #     reanalysis_max_air_temp_k, reanalysis_tdtr_k, reanalysis_relative_humidity_percent
+  # ) %>% 
+  step_naomit(all_predictors(), total_cases) %>% 
+  step_log(total_cases, offset = 1)
 
 recipe_spec %>% prep() %>% juice() %>% #select(week_start_date, contains("cases")) #%>% View()
-  colnames
+  colnames() %>% sort()
 
 recipe_spec$var_info %>% View()
 
@@ -571,7 +619,12 @@ Prophet Boost
 
 ```{r}
 
-model_spec <- prophet_boost(mtry = 200, tree_depth = 2, learn_rate = .1) %>%
+xg.mtry <- 500
+xg.tree_depth <- 128
+xg.learn_rate <- .01
+xg.min_n <- 2
+
+model_spec <- prophet_boost(mtry = tune(), tree_depth = tune(), learn_rate = tune(), min_n = tune()) %>%
   set_engine("prophet_xgboost", yearly.seasonality = TRUE, weekly.seasonality = TRUE) 
 
 workflow_fit_proph_boost <- workflow() %>% 
@@ -581,30 +634,11 @@ workflow_fit_proph_boost <- workflow() %>%
 
 ```
 
-ARIMA Boost
-
-```{r}
-
-model_spec_ar <- arima_boost(
-  tree_depth = 2, learn_rate = .1, mtry = 200
-) %>%
-  set_engine("auto_arima_xgboost") 
-
-workflow_fit_ar_boost <- workflow() %>% 
-  add_model(model_spec_ar) %>% 
-  add_recipe(recipe_spec) %>% 
-  fit(as_tibble(train))
-
-```
-
 
 ##### Modeltime Table & Calibrate & Forecast
 
 ```{r}
-model_table <- modeltime_table(
-  workflow_fit_proph_boost
-  # workflow_fit_ar_boost
-) 
+model_table <- modeltime_table(workflow_fit_proph_boost) 
 
 calibration_table <- model_table %>%
   modeltime_calibrate(valid)
@@ -626,21 +660,114 @@ calibration_table %>%
 
 ```
 
+Tuning
+
 ```{r}
-fx.mt %>% 
+
+# parallel::stopCluster(cl)
+(all_cores <- parallel::detectCores())
+(cl <- makePSOCKcluster(all_cores))
+registerDoParallel(cl)
+
+```
+
+
+```{r}
+
+model_spec <- prophet_boost(mtry = tune(), tree_depth = tune(), learn_rate = tune(), min_n = tune()) %>%
+  set_engine("prophet_xgboost", yearly.seasonality = TRUE, weekly.seasonality = TRUE) 
+
+workflow_fit_proph_boost <- workflow() %>% 
+  add_model(model_spec) %>% 
+  add_recipe(recipe_spec)
+
+(tuning.grid <- grid_regular(
+  mtry(c(200, 600)),
+  learn_rate(c(-4, -1)),
+  tree_depth(c(1, 100)),
+  min_n(),
+  levels = c(4, 4, 4, 4)
+))
+
+# folds <- vfold_cv(data.train, v = 2)
+(folds <- rolling_origin(
+  train_sub, 
+  cumulative = F,
+  initial = 52*4, assess = 50, skip = 50
+))
+
+# Tune model
+tuning.lm <- workflow_fit_proph_boost %>%
+  tune_grid(folds, grid = tuning.grid)
+
+collect_notes(tuning.lm)$note[1]# %>% View()
+show_notes(.Last.tune.result)
+
+# Tuning Results
+collect_metrics(tuning.lm) #%>% View()
+collect_metrics(tuning.lm) %>% 
+  filter(.metric == "rmse") %>% 
+  ggplot(aes(
+    # x = penalty, 
+    x = learn_rate,
+    y = mean, 
+    # color = interaction(learn_rate, trees)
+    color = as.factor(mtry)
+  )) +
+  geom_line() + 
+  geom_point() +
+  geom_errorbar(aes(ymax = mean + std_err, ymin = mean - std_err)) +
+  scale_x_log10() +
+  # facet_grid(tree_depth ~ learn_rate, scales = "free_x") +
+  scale_y_continuous(labels = label_comma()) +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+```
+
+
+```{r}
+
+fx.mt.retrans <- fx.mt %>% 
   group_by(.model_desc) %>%
   arrange(.index) %>%
   mutate(
     # .value = .value - lag(.value)
-    .value = cumsum(.value)
-  ) %>%
+    .value = exp(.value) - 1,
+    # .value = cumsum(.value)
+  ) %>% 
+  ungroup()
+
+
+
+fx.mt.retrans %>%
   ggplot(aes(x = .index, y = .value, color = .model_desc)) +
-  geom_line()
+  geom_line() +
+  ggtitle(paste0(
+    "MAE: ", 
+    fx.mt.retrans %>% 
+      select(-.model_desc, -.model_id, -contains("conf")) %>% 
+      pivot_wider(names_from = .key, values_from = .value) %>% 
+      summarize(
+        mae_vec(actual, prediction)
+      ) %>% 
+      pull() %>% 
+      round(digits = 2)
+  ))
 
 
 
 ```
 
+```{r}
+
+
+fit.boost.orig <- extract_fit_engine(workflow_fit_proph_boost)
+
+xgboost::xgb.importance(model = fit.boost.orig$models$model_2) %>% #View()
+  xgboost::xgb.plot.importance(top_n = 20) 
+
+```
 
 
 ### Ensemble
