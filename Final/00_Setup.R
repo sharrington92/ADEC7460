@@ -55,6 +55,29 @@
     ) %>% 
       return()
   }
+  
+  
+  fn_cumulative_to_week <- function(the_fable, the_city, the_data = train.all, adjust_fx = 0){
+    
+    fx_start <- the_fable %>% 
+      as_tibble() %>% 
+      summarize(min(yearweek)) %>% 
+      pull()
+    
+    last_val <- the_data %>% 
+      filter(city == the_city) %>% 
+      filter(yearweek < fx_start) %>% 
+      pull(cases_cumulative) %>% 
+      last()
+    
+    weekly <- the_fable$.mean - lag(the_fable$.mean, default = last_val)
+    
+    if(adjust_fx == 1){
+      weekly <- ifelse(weekly < 0, 0, weekly)
+    }
+    
+    return(weekly)
+  }
 }
 
 
