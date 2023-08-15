@@ -53,7 +53,7 @@
 }
 
 
-# GLM with FPP3 ----
+# ARIMA with FPP3 ----
 {
   
   ## Fit ----
@@ -88,9 +88,16 @@
           m1 = ARIMA(
             box_cox(cases_cumulative, .7) ~ 1 + 
               fourier(K = 5) + PDQ(D=0,Q=0) +
-              lag(precip_4w, n = 5) +
+              lag(precip_4w, n = 10) +
               rollmean(reanalysis_tdtr_k_sa, k = 5, fill = NA, align = "right") +
               lag(hdd_reanalysis_4w_sa * humidity_rel_avg_4w_sa, n = 6)
+            # + PC15 %>% lag(n = 6)
+            # + PC20 %>% lag(n = 1)
+            # + PC1 %>% lag(n = 1)
+            + lag(station_diur_temp_rng_c, n = 5)
+            + lag(hdd_reanalysis_365d_sa, n = 5)
+            + lag(hdd_station_365d, n = 10)
+            + lag(precip_365d_sa, n = 8)
           ),
           # ETS(log(cases_cumulative) ~ trend("Ad", phi = .5))
         )
@@ -534,14 +541,14 @@
   
   ## Recipe ----
   {
-    recipe.lm <- train_sub_with.fx %>% 
-      recipe(data = ., model1.resid ~ .) %>% 
+    recipe.lm <- train_sub %>% 
+      recipe(data = ., cases_cumulative ~ .) %>% 
       # step_mutate(total_cases = cumsum(total_cases)) %>% 
       step_filter(cases_cumulative >= 10, skip = FALSE) %>% 
       update_role(
         any_of(c(
-          setdiff(vars.y, "total_cases"),
-          "", "predict_cases"
+          setdiff(vars.y, "cases_cumulative"),
+          "", "days_in_week"
         )), 
         new_role = "ID"
       ) %>%
@@ -550,14 +557,14 @@
         # vars.id,
         new_role = "ID"
       ) %>% 
-      update_role(
-        contains("station"),
-        new_role = "ID"
-      ) %>% 
-      update_role(
-        contains("PC"),
-        new_role = "ID"
-      ) %>%
+      # update_role(
+      #   contains("station"),
+      #   new_role = "ID"
+      # ) %>% 
+      # update_role(
+      #   contains("PC"),
+      #   new_role = "ID"
+      # ) %>%
       # step_mutate(total_cases_bc = log(total_cases + .1527629)) %>%
       step_arrange() %>%
       step_lag(all_numeric_predictors(), lag = 1:10) %>%
@@ -585,6 +592,10 @@
       update_role(week_start_date, new_role = "ID")
     
     recipe.lm$var_info %>% View()
+    
+    bake(prep(recipe.lm), new_data = as_tibble(train_sub)) %>% 
+      select(yearweek, days_in_week) %>% 
+      View()
   }
   
   
@@ -611,18 +622,18 @@
       
       # Set up grid for lambda/penalty
       # (tuning.grid <- grid_regular(
-      #   penalty(c(-10, 1), trans = log10_trans()), 
+      #   penalty(c(-10, 1), trans = log10_trans()),
       #   levels = c(20)
       # ))
       (tuning.grid <- grid_regular(
         mtry(c(100, 200)),
-        learn_rate(c(-1, 0)), 
+        learn_rate(c(-1, 0)),
         levels = c(4, 4)
       ))
       
       # folds <- vfold_cv(data.train, v = 2)
       (folds <- rolling_origin(
-        train_sub_with.fx, 
+        train_sub, 
         cumulative = F,
         initial = 52*4, assess = 50, skip = 50
       ))
@@ -648,14 +659,15 @@
       collect_metrics(tuning.lm) %>% 
         filter(.metric == "rmse") %>% 
         ggplot(aes(
-          x = learn_rate, 
+          # x = penalty, 
+          x = learn_rate,
           y = mean, 
           # color = interaction(learn_rate, trees)
           color = as.factor(mtry)
         )) +
         geom_line() + 
         geom_point() +
-        # geom_errorbar(aes(ymax = mean + std_err, ymin = mean - std_err)) +
+        geom_errorbar(aes(ymax = mean + std_err, ymin = mean - std_err)) +
         scale_x_log10() +
         # facet_grid(tree_depth ~ learn_rate, scales = "free_x") +
         scale_y_continuous(labels = label_comma()) +
@@ -680,10 +692,11 @@
     
     # Final fit
     fit.lm <- wf.lm.final %>% 
-      fit(train_sub_with.fx)
+      fit(train_sub)
     
     fit.lm.orig <- extract_fit_engine(fit.lm)
     
+    # fit.lm.orig$
     
     xgboost::xgb.importance(model = fit.lm.orig) %>% #View()
       xgboost::xgb.plot.importance(top_n = 20)
