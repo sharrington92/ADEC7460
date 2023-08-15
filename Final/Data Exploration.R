@@ -29,20 +29,30 @@
       # Time plot
       {
         train %>% 
-          autoplot(box_cox(total_cases_scaled, 1))
+          autoplot(box_cox(cases_cumulative, lambda.iq_cum))
         
         train %>% 
-          autoplot(box_cox(cases_ytd, 1))
+          autoplot(
+            # cases_cumulative
+            box_cox(cases_cumulative, lambda.iq_cum) %>% difference()
+            # box_cox(cases_ytd, 1)
+          )
       }
       
       # Seasonality
       {
         train %>% 
-          gg_season(box_cox(total_cases,1)) +
+          gg_season(
+            box_cox(total_cases,1)
+          ) +
           scale_y_continuous(trans = "log10")
         
         train %>% 
-          gg_season(box_cox(cases_ytd, 1)) +
+          gg_season(
+            cases_cumulative %>% difference()
+            # box_cox(cases_cumulative, lambda.iq_cum) %>% difference()
+            # box_cox(cases_ytd, 1)
+          ) +
           scale_y_continuous(trans = "log10")
         
         
@@ -138,14 +148,34 @@
       as_tibble() %>% 
       select(-c(
         city, year, weekofyear, week_start_date, yearweek, is_missing, 
-        cases_cumulative, 
+        # cases_cumulative, 
         cases_ytd
         # total_cases
       )) %>% #filter(!is.na(total_cases)) %>% cor(use = 'complete.obs')
-      select(total_cases, contains("_sa")) %>% 
-      pivot_longer(-total_cases) %>% 
+      # select(total_cases, contains("_sa")) %>% 
+      select(
+        total_cases, cases_cumulative, 
+        hdd_reanalysis_365d_sa, hdd_reanalysis_365d,
+        hdd_station_4w_sa, 
+        hdd_station_365d, hdd_station_365d_sa,
+        precip_4w, precip_365d_sa,
+        PC20, PC15,
+        station_diur_temp_rng_c
+      ) %>% 
+      mutate(
+        PC20 = PC20 %>% lag(n = 1) %>% difference(),
+        PC15 = PC15 %>% lag(n = 6),
+        station_diur_temp_rng_c
+      ) %>% 
+      pivot_longer(-c(total_cases, cases_cumulative)) %>% 
       slice_sample(prop = .25) %>% 
-      ggplot(aes(x = box_cox(value, 1), y = box_cox(total_cases, .15), color = name)) +
+      ggplot(aes(
+        # x = box_cox(value, 1), 
+        x = value, # %>% lag(5),
+        # y = box_cox(total_cases, 1), 
+        y = box_cox(cases_cumulative, lambda.iq_cum) %>% difference(),
+        color = name
+      )) +
       geom_point() +
       geom_smooth(method = "lm", color = "gray50") +
       facet_wrap(name ~ ., scales = "free") +
@@ -254,14 +284,15 @@
     vars.x.pc
     
     train %>% 
-      filter(year %in% c(1993:1998)) %>% #as_tibble() %>% View()
+      filter(city == "iq") %>% 
+      # filter(year %in% c(1993:1998)) %>% #as_tibble() %>% View()
       # mutate(across(all_of(c(vars.x, vars.y)), difference)) %>%
       mutate(across(
         all_of(vars.x),
-        \(x){rollmean(x, k = 15, fill = NA, align = "right")}
+        \(x){rollmean(x, k = 5, fill = NA, align = "right")}
       )) %>% 
       # mutate(across(all_of(c(vars.x, vars.y)), difference)) %>%
-      pivot_longer(-c(all_of(vars.id)), names_to = "variable") %>% 
+      pivot_longer(-c(any_of(c(vars.id, "days_in_week"))), names_to = "variable") %>% 
       # filter(variable %in% c(
       #   "total_cases", #"total_cases_sa", 
       #   # "hdd_reanalysis_365d_sa", "precip_4w_sa", "precip_365d_sa",
@@ -293,10 +324,12 @@
         # "reanalysis_dew_point_temp_k", "reanalysis_max_air_temp_k",
         # "reanalysis_min_air_temp_k"
         
+        vars.x.sa[11:15]
+        
         # "reanalysis_relative_humidity_percent", "reanalysis_specific_humidity_g_per_kg",
         # "reanalysis_tdtr_k", "station_precip_mm"
         
-        paste("PC", 1:5, sep = "")
+        # paste("PC", 1:5, sep = "")
       )) %>% 
       ggplot(aes(x = yearweek, y = value, color = variable)) + 
       geom_line() +
@@ -306,6 +339,7 @@
         xintercept = seq.Date(from = as.Date("1990-07-01"), to = as.Date("2015-07-01"), by = "1 year"), 
         linetype = "dotted", color = "red4", alpha = .15, linewidth = 1.25
       ) +
+      geom_smooth(method = "lm", se = F, color = "gray40") +
       facet_grid(variable ~ city, scales = "free") +
       theme(
         legend.position = "none"
