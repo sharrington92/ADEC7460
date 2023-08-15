@@ -1,0 +1,721 @@
+---
+title: "Dengue Fever Forecasting"
+author: "Shaun Harrington"
+format: html
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup}
+
+require(tidyverse)
+require(fpp3)
+library(modeltime)
+
+if(!stringr::str_detect(basename(getwd()), "Time Series") & stringr::str_detect(dirname(getwd()), "Time Series")){
+    repeat{
+      setwd("../")
+      if(stringr::str_detect(basename(getwd()), "Time Series")){
+        break
+      }
+    }
+  }
+  
+  if(basename(getwd()) != "Final") setwd(file.path(getwd(), "Final"))
+
+source(file.path("00_Setup.R"))
+
+```
+
+
+## Introduction
+
+## Data Exploration
+
+
+## Modeling
+
+### Model 1: Mean
+
+#### Iquitos
+
+Estimation
+
+```{r}
+
+fit1.iq <- train %>% 
+  filter(city == "iq") %>% 
+  filter(cases_cumulative >= 10) %>% 
+  model(
+    fit1 = TSLM(box_cox(cases_cumulative, .8) ~ fourier(K = 10) + trend())
+  )
+
+```
+
+Analyze
+
+
+```{r}
+
+fit1.iq %>% report()
+
+```
+
+```{r}
+
+fit1.iq %>% 
+  gg_tsresiduals(lag_max = 100)
+
+```
+
+
+Forecast
+
+```{r}
+
+fx1.iq <- fit1.iq %>% 
+  forecast(valid)
+
+fx1.iq$predicted_cases <- fn_cumulative_to_week(fx1.iq, "iq", train.all, 1)
+
+fx1.iq_accuracy <- fx1.iq %>% 
+  fabletools::accuracy(valid) %>% 
+  arrange(MAE)
+
+fx1.iq_mae_cases <- mae_vec(
+  valid %>% filter(city == "iq") %>% pull(total_cases), 
+  fn_cumulative_to_week(fx1.iq, "iq", train.all, 1)
+)
+
+fx1.iq %>% 
+  autoplot(train.all %>% filter(year>= 2003)) +
+  scale_y_continuous(labels = label_comma())
+
+```
+
+
+The Mean Absolute Error on this model is `r fx1.iq_accuracy$MAE` cumulative cases and the MAE for weekly cases is `r fx1.iq_mae_cases`.
+
+
+#### San Jose 
+
+Estimation
+
+```{r}
+
+fit1.sj <- train %>% 
+  filter(city == "sj") %>% 
+  filter(cases_cumulative >= 10) %>% 
+  model(
+    fit1 = TSLM(box_cox(cases_cumulative, 2.15) ~ fourier(K = 10) + trend())
+  )
+
+
+
+
+
+```
+
+Analyze
+
+```{r}
+
+fit1.sj %>% report()
+
+```
+
+```{r}
+
+fit1.sj %>% 
+  gg_tsresiduals(lag_max = 100)
+
+```
+
+
+Forecast
+
+```{r}
+
+fx1.sj <- fit1.sj %>% 
+  forecast(valid) 
+
+fx1.sj$predicted_cases <- fn_cumulative_to_week(fx1.sj, "sj", train.all, 1)
+
+fx1.sj_accuracy <- fx1.sj %>% 
+  fabletools::accuracy(valid) %>% 
+  arrange(MAE)
+
+fx1.sj_mae_cases <- mae_vec(
+  valid %>% filter(city == "sj") %>% pull(total_cases), 
+  fx1.sj$predicted_cases
+)
+
+fx1.sj %>% 
+  autoplot(train.all %>% filter(year>= 2003)) +
+  scale_y_continuous(labels = label_comma())
+
+```
+
+
+
+The Mean Absolute Error on this model is `r fx1.sj_accuracy$MAE` cumulative cases and the MAE for weekly cases is `r fx1.sj_mae_cases`.
+
+### Model 2: SARIMAX
+
+#### Iquitos
+
+Estimation
+
+```{r}
+
+fit2.iq <- train %>% 
+  filter(city == "iq") %>% 
+  filter(cases_cumulative > 10) %>% 
+  model(
+    fit2 = ARIMA(
+      box_cox(cases_cumulative, .7) ~ 1 + 
+        fourier(K = 5) + PDQ(D=0,Q=0) +
+        lag(precip_4w, n = 10) +
+        rollmean(reanalysis_tdtr_k_sa, k = 5, fill = NA, align = "right") +
+        lag(hdd_reanalysis_4w_sa * humidity_rel_avg_4w_sa, n = 6)
+      # + PC15 %>% lag(n = 6)
+      # + PC20 %>% lag(n = 1)
+      # + PC1 %>% lag(n = 1)
+      + lag(station_diur_temp_rng_c, n = 5)
+      + lag(hdd_reanalysis_365d_sa, n = 5)
+      + lag(hdd_station_365d, n = 10)
+      + lag(precip_365d_sa, n = 8)
+    ),
+    # ETS(log(cases_cumulative) ~ trend("Ad", phi = .5))
+  )
+
+```
+
+
+Analyze
+
+```{r}
+
+fit2.iq %>% report()
+
+```
+
+```{r}
+
+fit2.iq %>% 
+  gg_tsresiduals(lag_max = 100)
+
+```
+
+Forecast
+
+```{r}
+
+fx2.iq <- fit2.iq %>% 
+  forecast(valid)
+
+fx2.iq$predicted_cases <- fn_cumulative_to_week(fx2.iq, "iq", train.all, 1)
+
+fx2.iq_accuracy <- fx2.iq %>% 
+  fabletools::accuracy(valid)
+
+fx2.iq_mae_cases <- mae_vec(
+  valid %>% filter(city == "iq") %>% pull(total_cases), 
+  fx2.iq$predicted_cases
+)
+
+fx2.iq %>% 
+  autoplot(valid) + 
+  autolayer(train.all %>% filter(city == "iq", year >= 2005), cases_cumulative)
+
+```
+
+
+```{r}
+
+fx2.iq %>% 
+  as_tibble() %>% 
+  select(yearweek, total_cases, predicted_cases) %>% 
+  rename(actual_cases = total_cases) %>% 
+  pivot_longer(-yearweek, names_to = "Series") %>% 
+  ggplot(aes(x = yearweek, y = value, color = Series)) +
+  geom_line() +
+  theme(
+    legend.position = c(1, .9),
+    legend.text.align = 1,
+    legend.title.align = 1,
+    legend.justification = "right"
+  )
+
+```
+
+
+
+#### San Jose
+
+Estimation
+
+```{r}
+
+fit2.sj <- train %>% 
+  filter(city == "sj") %>% 
+  filter(cases_cumulative > 10) %>% 
+  model(
+    fit2 = ARIMA(
+      box_cox(cases_cumulative, .7) ~ 1 + 
+        fourier(K = 5) + PDQ(D=0,Q=0) +
+        lag(precip_4w, n = 10) +
+        rollmean(reanalysis_tdtr_k_sa, k = 5, fill = NA, align = "right") +
+        lag(hdd_reanalysis_4w_sa * humidity_rel_avg_4w_sa, n = 6)
+      # + PC15 %>% lag(n = 6)
+      # + PC20 %>% lag(n = 1)
+      # + PC1 %>% lag(n = 1)
+      + lag(station_diur_temp_rng_c, n = 5)
+      + lag(hdd_reanalysis_365d_sa, n = 5)
+      + lag(hdd_station_365d, n = 10)
+      + lag(precip_365d_sa, n = 8)
+    ),
+    # ETS(log(cases_cumulative) ~ trend("Ad", phi = .5))
+  )
+
+```
+
+
+Analyze
+
+```{r}
+
+fit2.sj %>% report()
+
+```
+
+```{r}
+
+fit2.sj %>% 
+  gg_tsresiduals(lag_max = 100)
+
+```
+
+Forecast
+
+```{r}
+
+fx2.sj <- fit2.sj %>% 
+  forecast(valid)
+
+fx2.sj$predicted_cases <- fn_cumulative_to_week(fx2.sj, "sj", train.all, 1)
+
+fx2.sj_accuracy <- fx2.sj %>% 
+  fabletools::accuracy(valid)
+
+fx2.sj_mae_cases <- mae_vec(
+  valid %>% filter(city == "sj") %>% pull(total_cases), 
+  fx2.sj$predicted_cases
+)
+
+fx2.sj %>% 
+  autoplot(valid) + 
+  autolayer(train.all %>% filter(city == "sj", year >= 2005), cases_cumulative)
+
+```
+
+
+```{r}
+
+fx2.sj %>% 
+  as_tibble() %>% 
+  select(yearweek, total_cases, predicted_cases) %>% 
+  rename(actual_cases = total_cases) %>% 
+  pivot_longer(-yearweek, names_to = "Series") %>% 
+  ggplot(aes(x = yearweek, y = value, color = Series)) +
+  geom_line() +
+  theme(
+    legend.position = c(1, .9),
+    legend.text.align = 1,
+    legend.title.align = 1,
+    legend.justification = "right"
+  )
+
+```
+
+
+### Model 3: 
+
+#### Iquitos
+
+Estimation
+
+```{r}
+
+(fit3.iq <- train %>% 
+  filter(city == "iq") %>% 
+  filter(cases_cumulative > 10) %>% 
+  model(
+    fit3a = NNETAR(scale_inputs = TRUE, n_networks = 30, 
+      box_cox(total_cases, .15) ~ 1 #+ weekofyear #+ fourier(K = 1) 
+      + hdd_reanalysis_365d
+      + humidity_rel_avg_4w
+      + humidity_rel_avg_2w
+      + precip_4w + precip_365d
+      + station_diur_temp_rng_c
+      + reanalysis_tdtr_k
+      # + ndvi_ne + ndvi_nw + ndvi_se + ndvi_sw
+      + hdd_station_4w
+    ),
+    fit3b = NNETAR(scale_inputs = TRUE, n_networks = 30, 
+      box_cox(total_cases, .15) ~ 1 #+ weekofyear #+ fourier(K = 1) 
+      + hdd_reanalysis_365d
+      + humidity_rel_avg_4w
+      + humidity_rel_avg_2w
+      + precip_4w + precip_365d
+      + station_diur_temp_rng_c
+      # + reanalysis_tdtr_k
+      # + ndvi_ne_sa + ndvi_nw_sa + ndvi_se_sa + ndvi_sw_sa
+      + hdd_station_4w
+    )
+  ))
+
+```
+
+
+Analyze
+
+```{r}
+
+fit3.iq %>% 
+  gg_tsresiduals(lag_max = 100)
+
+```
+
+Forecast
+
+```{r}
+
+fx3.iq <- fit3.iq %>% 
+  forecast(
+    # train.all %>% drop_na() %>% filter(year > 2006),
+    valid,
+    times = 50
+  )
+
+# fx3.iq$predicted_cases <- fn_cumulative_to_week(fx3.iq, "iq", train.all, 1)
+
+(fx3.iq_accuracy <- fx3.iq %>% 
+  fabletools::accuracy(valid))
+
+# (fx3.iq_mae_cases <- mae_vec(
+#   # train.all %>% drop_na() %>% filter(year >2005) %>% filter(city == "iq") %>% pull(total_cases), 
+#   valid %>% filter(city == "iq") %>% pull(total_cases), 
+#   fx3.iq$predicted_cases
+# ))
+
+fx3.iq %>% 
+  autoplot(valid, level = NULL) + 
+  autolayer(train.all %>% filter(city == "iq", year >= 2007), total_cases)
+
+```
+
+
+```{r}
+
+fx3.iq %>% 
+  as_tibble() %>% 
+  select(yearweek, total_cases, predicted_cases) %>% 
+  rename(actual_cases = total_cases) %>% 
+  pivot_longer(-yearweek, names_to = "Series") %>% 
+  ggplot(aes(x = yearweek, y = value, color = Series)) +
+  geom_line() +
+  theme(
+    legend.position = c(1, .9),
+    legend.text.align = 1,
+    legend.title.align = 1,
+    legend.justification = "right"
+  )
+
+```
+
+
+
+#### San Jose
+
+Estimation
+
+```{r}
+
+fit3.sj <- train %>% 
+  filter(city == "sj") %>% 
+  filter(cases_cumulative > 10) %>% 
+  model(
+    fit3 = ARIMA(
+      box_cox(cases_cumulative, .7) ~ 1 + 
+        fourier(K = 5) + PDQ(D=0,Q=0) +
+        lag(precip_4w, n = 10) +
+        rollmean(reanalysis_tdtr_k_sa, k = 5, fill = NA, align = "right") +
+        lag(hdd_reanalysis_4w_sa * humidity_rel_avg_4w_sa, n = 6)
+      # + PC15 %>% lag(n = 6)
+      # + PC20 %>% lag(n = 1)
+      # + PC1 %>% lag(n = 1)
+      + lag(station_diur_temp_rng_c, n = 5)
+      + lag(hdd_reanalysis_365d_sa, n = 5)
+      + lag(hdd_station_365d, n = 10)
+      + lag(precip_365d_sa, n = 8)
+    ),
+    # ETS(log(cases_cumulative) ~ trend("Ad", phi = .5))
+  )
+
+```
+
+
+Analyze
+
+```{r}
+
+fit3.sj %>% report()
+
+```
+
+```{r}
+
+fit3.sj %>% 
+  gg_tsresiduals(lag_max = 100)
+
+```
+
+Forecast
+
+```{r}
+
+fx3.sj <- fit3.sj %>% 
+  forecast(valid)
+
+fx3.sj$predicted_cases <- fn_cumulative_to_week(fx3.sj, "sj", train.all, 1)
+
+fx3.sj_accuracy <- fx3.sj %>% 
+  fabletools::accuracy(valid)
+
+fx3.sj_mae_cases <- mae_vec(
+  valid %>% filter(city == "sj") %>% pull(total_cases), 
+  fx3.sj$predicted_cases
+)
+
+fx3.sj %>% 
+  autoplot(valid) + 
+  autolayer(train.all %>% filter(city == "sj", year >= 2005), cases_cumulative)
+
+```
+
+
+```{r}
+
+fx3.sj %>% 
+  as_tibble() %>% 
+  select(yearweek, total_cases, predicted_cases) %>% 
+  rename(actual_cases = total_cases) %>% 
+  pivot_longer(-yearweek, names_to = "Series") %>% 
+  ggplot(aes(x = yearweek, y = value, color = Series)) +
+  geom_line() +
+  theme(
+    legend.position = c(1, .9),
+    legend.text.align = 1,
+    legend.title.align = 1,
+    legend.justification = "right"
+  )
+
+```
+
+
+
+
+### Modeltime
+
+#### Iquitos
+
+##### Recipe
+
+```{r}
+
+recipe_spec <- train %>%
+  as_tibble() %>% 
+  recipe(total_cases_trans_bc.7 ~ ., data = .) %>% 
+  step_filter(city == "iq") %>% 
+  step_timeseries_signature(week_start_date) %>% 
+  step_rm(
+    any_of(c(
+      setdiff(vars.id, c("weekofyear", "week_start_date")), 
+      setdiff(vars.y, "total_cases_trans_bc.7")
+    )),
+    contains("PC")
+  ) %>% 
+  step_rm(
+    contains("am.pm"), contains("hour"), contains("minute"),
+    contains("second"), contains("xts"), contains("day")
+  ) %>% 
+  step_fourier(week_start_date, period = 52, K = 5) %>% 
+  step_dummy(all_nominal_predictors()) %>% 
+  step_lag(all_numeric_predictors(), lag = 1:10) %>% 
+  # step_box_cox(cases_cumulative) %>% 
+  # step_diff(cases_cumulative, role = "outcome") %>% 
+  step_normalize(all_numeric_predictors()) %>% 
+  step_naomit(all_predictors(), total_cases_trans_bc.7)
+
+recipe_spec %>% prep() %>% juice() %>% #select(week_start_date, contains("cases")) #%>% View()
+  colnames
+
+recipe_spec$var_info %>% View()
+
+```
+
+##### Models
+
+Prophet Boost
+
+```{r}
+
+model_spec <- prophet_boost(mtry = 200, tree_depth = 2, learn_rate = .1) %>%
+  set_engine("prophet_xgboost", yearly.seasonality = TRUE, weekly.seasonality = TRUE) 
+
+workflow_fit_proph_boost <- workflow() %>% 
+  add_model(model_spec) %>% 
+  add_recipe(recipe_spec) %>% 
+  fit(as_tibble(train))
+
+```
+
+ARIMA Boost
+
+```{r}
+
+model_spec_ar <- arima_boost(
+  tree_depth = 2, learn_rate = .1, mtry = 200
+) %>%
+  set_engine("auto_arima_xgboost") 
+
+workflow_fit_ar_boost <- workflow() %>% 
+  add_model(model_spec_ar) %>% 
+  add_recipe(recipe_spec) %>% 
+  fit(as_tibble(train))
+
+```
+
+
+##### Modeltime Table & Calibrate & Forecast
+
+```{r}
+model_table <- modeltime_table(
+  workflow_fit_proph_boost
+  # workflow_fit_ar_boost
+) 
+
+calibration_table <- model_table %>%
+  modeltime_calibrate(valid)
+
+calibration_table
+
+
+fx.mt <- calibration_table %>%
+  modeltime_forecast(
+    new_data = as_tibble(train.all) %>% filter(city == "iq", year >= 2008), 
+    actual_data = as_tibble(train.all) %>% filter(city == "iq", year >= 2008)
+  )
+
+fx.mt %>%
+  plot_modeltime_forecast(.interactive = FALSE, .conf_interval_show = FALSE)
+
+calibration_table %>%
+  modeltime_accuracy()
+
+```
+
+```{r}
+fx.mt %>% 
+  group_by(.model_desc) %>%
+  arrange(.index) %>%
+  mutate(
+    # .value = .value - lag(.value)
+    .value = cumsum(.value)
+  ) %>%
+  ggplot(aes(x = .index, y = .value, color = .model_desc)) +
+  geom_line()
+
+
+
+```
+
+
+
+### Ensemble
+
+#### Iquitos
+
+```{r}
+
+fit.iq <- full_join(fit1.iq, fit2.iq) %>% 
+  mutate(ensemble = (fit1 + fit2) / 2)
+
+fx.iq <- fit.iq %>% 
+  forecast(valid)
+
+fx.iq %>% 
+  fabletools::accuracy(valid)
+
+fx.iq %>% 
+  autoplot(valid)
+
+```
+
+
+#### San Jose
+
+
+```{r}
+
+fit.sj <- full_join(fit1.sj, fit2.sj) %>% 
+  mutate(ensemble = (fit1 + fit2) / 2)
+
+fx.sj <- fit.sj %>% 
+  forecast(valid)
+
+fx.sj %>% 
+  fabletools::accuracy(valid)
+
+fx.sj %>% 
+  autoplot(valid)
+
+```
+
+
+
+## Comparison
+
+### Iquitos
+
+```{r}
+
+tibble(
+  Model1 = fx1.iq_mae_cases,
+  Model2 = fx2.iq_mae_cases
+) %>% 
+  pivot_longer(everything(), names_to = "Model", values_to = "MAE")
+
+```
+
+
+### San Jose
+
+```{r}
+
+tibble(
+  Model1 = fx1.sj_mae_cases,
+  Model2 = fx2.sj_mae_cases
+) %>% 
+  pivot_longer(everything(), names_to = "Model", values_to = "MAE")
+
+```
+
+
+## Forecast on Test Set
+
+### Iquitos
+
+
+### San Jose
