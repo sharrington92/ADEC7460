@@ -2,11 +2,19 @@
 title: "Dengue Fever Forecasting"
 author: "Shaun Harrington"
 format: html
+  code-fold: true
+  fig-height: 4
+  fig-width: 8
+execute:
+  warning: false
+  error: false
 editor_options: 
   chunk_output_type: console
 ---
 
 ```{r setup}
+#|eval: true
+#|echo: false
 
 require(tidyverse)
 require(fpp3)
@@ -25,14 +33,38 @@ if(!stringr::str_detect(basename(getwd()), "Time Series") & stringr::str_detect(
 
 source(file.path("00_Setup.R"))
 
-```
+# 
+(all_cores <- parallel::detectCores())
+(cl <- makePSOCKcluster(all_cores))
+registerDoParallel(cl)
 
+```
 
 ## Introduction
 
-## Data Exploration
+#### Background
 
-### Time Plots
+<!-- Brief about Dengue fever, its global and local significance. -->
+<!-- Importance of forecasting for Dengue fever cases. -->
+
+#### Objective
+
+<!-- Clearly state the aim of the paper, i.e., to forecast Dengue fever cases in the two cities using predictive analytics. -->
+
+## Methodology
+
+### Data Description & Exploration
+
+<!-- Description of the dataset: sources, time period, variables, etc. -->
+<!-- Discuss any data cleaning or preprocessing steps. -->
+
+The dataset is provided by Driven Data where a training set and test set are given. The training dataset not only contains weekly Dengue Fever cases but various weather variables including precipitation, humidity, various temperatures, vegetation growth, and annual population levels for each city. Several other variables are created from these existing exogenous variables. 
+
+* Growing Degree Days (GDD): GDDs are used to approximate mosquito population growth rates as they are positively correlated. A baseline of $10$
+
+pmin(pmax(station_avg_temp_c - 10, 0), 34-10)
+
+#### Time Plots
 
 ```{r}
 
@@ -49,10 +81,24 @@ train %>%
 ```
 
 
+#### Seasonality
+
 ```{r}
 
 train %>% 
-  autoplot(cases_cumulative / population)
+  gg_season(total_cases) 
+
+```
+
+
+#### Decomposition
+
+```{r}
+
+train %>% 
+  model(STL(log(total_cases+1))) %>% 
+  components() %>% 
+  autoplot()
 
 ```
 
@@ -60,22 +106,60 @@ train %>%
 
 ```{r}
 
-train %>% 
-  autoplot(log(rollsum(total_cases, k = 8, fill = NA, align = "right") / population))
+L = 5
+train %>%
+  mutate(
+    cases_365d_cut = cut_number(cases_365d, n = L),
+    precip_4w_cut = cut_number(precip_4w_sa, n = L),
+    humidity_rel_avg_4w_cut = cut_number(humidity_rel_avg_4w, n = 4) %>% lag(n = L),
+    humidity_rel_avg_2w_cut = cut_number(humidity_rel_avg_2w, n = L),
+    hdd_reanalysis_4w_cut = cut_number(hdd_reanalysis_4w_sa, n = L),
+    hdd_station_4w_cut = cut_number(hdd_station_4w, n = L)
+  ) %>% drop_na() %>% 
+  ggplot(aes(
+    x = lag(precip_4w_sa, n = L), 
+    y = lag(hdd_station_4w_sa, n = L), 
+    color = total_cases_scaled, alpha = total_cases_scaled
+  )) +
+  geom_point() +
+  facet_grid(city ~ humidity_rel_avg_4w_cut, scales = "free", drop = T) +
+  scale_color_viridis_c() +
+  xlab("Rolling 4-week Precipitation, Seasonally Adjusted with 5 week lag") +
+  ylab("Rolling 4-week Heating Degree Days, Seasonally Adjusted with 5 week lag") +
+  ggtitle(
+    "Interaction of Precipitation and Heating Degree Days Influencing Dengue Fever Cases Across Humidity Intervals"
+  ) +
+  theme(
+    legend.position = "bottom"
+  )
+
 
 ```
 
 
 
-## Modeling
+### Modeling
 
-### Model 1: Mean
+#### Description of Models
 
-#### Iquitos
+<!-- Discuss the rationale for selecting these models. -->
+<!-- Provide a brief theoretical background for each model. -->
 
-Estimation
+#### Modeling Training
 
-```{r}
+<!-- Description of the training set and validation set. -->
+
+<!-- Discuss any hyperparameter tuning or model optimization steps.
+Discuss any hyperparameter tuning or model optimization steps. -->
+
+
+##### Model 1: Mean
+
+####### Iquitos
+
+
+
+```{r m1_fit_iq}
 
 fit1.iq <- train %>% 
   filter(city == "iq") %>% 
@@ -86,56 +170,13 @@ fit1.iq <- train %>%
 
 ```
 
-Analyze
 
 
-```{r}
-
-fit1.iq %>% report()
-
-```
-
-```{r}
-
-fit1.iq %>% 
-  gg_tsresiduals(lag_max = 100)
-
-```
-
-
-Forecast
-
-```{r}
-
-fx1.iq <- fit1.iq %>% 
-  forecast(valid)
-
-fx1.iq$predicted_cases <- fn_cumulative_to_week(fx1.iq, "iq", train.all, 1)
-
-fx1.iq_accuracy <- fx1.iq %>% 
-  fabletools::accuracy(valid) %>% 
-  arrange(MAE)
-
-fx1.iq_mae_cases <- mae_vec(
-  valid %>% filter(city == "iq") %>% pull(total_cases), 
-  fn_cumulative_to_week(fx1.iq, "iq", train.all, 1)
-)
-
-fx1.iq %>% 
-  autoplot(train.all %>% filter(year>= 2003)) +
-  scale_y_continuous(labels = label_comma())
-
-```
-
-
-The Mean Absolute Error on this model is `r fx1.iq_accuracy$MAE` cumulative cases and the MAE for weekly cases is `r fx1.iq_mae_cases`.
-
-
-#### San Jose 
+####### San Jose 
 
 Estimation
 
-```{r}
+```{r m1_fit_sj}
 
 fit1.sj <- train %>% 
   filter(city == "sj") %>% 
@@ -145,62 +186,19 @@ fit1.sj <- train %>%
   )
 
 
-
-
-
-```
-
-Analyze
-
-```{r}
-
-fit1.sj %>% report()
-
-```
-
-```{r}
-
-fit1.sj %>% 
-  gg_tsresiduals(lag_max = 100)
-
-```
-
-
-Forecast
-
-```{r}
-
-fx1.sj <- fit1.sj %>% 
-  forecast(valid) 
-
-fx1.sj$predicted_cases <- fn_cumulative_to_week(fx1.sj, "sj", train.all, 1)
-
-fx1.sj_accuracy <- fx1.sj %>% 
-  fabletools::accuracy(valid) %>% 
-  arrange(MAE)
-
-fx1.sj_mae_cases <- mae_vec(
-  valid %>% filter(city == "sj") %>% pull(total_cases), 
-  fx1.sj$predicted_cases
-)
-
-fx1.sj %>% 
-  autoplot(train.all %>% filter(year>= 2003)) +
-  scale_y_continuous(labels = label_comma())
-
 ```
 
 
 
-The Mean Absolute Error on this model is `r fx1.sj_accuracy$MAE` cumulative cases and the MAE for weekly cases is `r fx1.sj_mae_cases`.
 
-### Model 2: SARIMAX
+##### Model 2: SARIMAX
 
-#### Iquitos
+####### Iquitos
 
-Estimation
 
-```{r}
+
+```{r m2_fit_iq}
+#| eval: false
 
 fit2.iq <- train %>% 
   filter(city == "iq") %>% 
@@ -219,77 +217,42 @@ fit2.iq <- train %>%
       + lag(hdd_reanalysis_365d_sa, n = 5)
       + lag(hdd_station_365d, n = 10)
       + lag(precip_365d_sa, n = 8)
-    ),
-    # ETS(log(cases_cumulative) ~ trend("Ad", phi = .5))
-  )
-
-```
-
-
-Analyze
-
-```{r}
-
-fit2.iq %>% report()
-
-```
-
-```{r}
-
-fit2.iq %>% 
-  gg_tsresiduals(lag_max = 100)
-
-```
-
-Forecast
-
-```{r}
-
-fx2.iq <- fit2.iq %>% 
-  forecast(valid)
-
-fx2.iq$predicted_cases <- fn_cumulative_to_week(fx2.iq, "iq", train.all, 1)
-
-fx2.iq_accuracy <- fx2.iq %>% 
-  fabletools::accuracy(valid)
-
-fx2.iq_mae_cases <- mae_vec(
-  valid %>% filter(city == "iq") %>% pull(total_cases), 
-  fx2.iq$predicted_cases
-)
-
-fx2.iq %>% 
-  autoplot(valid) + 
-  autolayer(train.all %>% filter(city == "iq", year >= 2005), cases_cumulative)
-
-```
-
-
-```{r}
-
-fx2.iq %>% 
-  as_tibble() %>% 
-  select(yearweek, total_cases, predicted_cases) %>% 
-  rename(actual_cases = total_cases) %>% 
-  pivot_longer(-yearweek, names_to = "Series") %>% 
-  ggplot(aes(x = yearweek, y = value, color = Series)) +
-  geom_line() +
-  theme(
-    legend.position = c(1, .9),
-    legend.text.align = 1,
-    legend.title.align = 1,
-    legend.justification = "right"
+    )
   )
 
 ```
 
 
 
-#### San Jose
+```{r m2_fit_iq_save}
+#| eval: false
+#| echo: false
 
-Estimation
+saveRDS(fit2.iq, "Report Objects/fit2.iq.RDS")
 
-```{r}
+
+```
+
+
+```{r m2_fit_iq_read}
+#| eval: true
+#| echo: false
+
+fit2.iq <- readRDS("Report Objects/fit2.iq.RDS")
+
+
+```
+
+
+
+
+####### San Jose
+
+
+
+```{r m2_fit_sj}
+#| eval: false
+
 
 fit2.sj <- train %>% 
   filter(city == "sj") %>% 
@@ -308,20 +271,446 @@ fit2.sj <- train %>%
       + lag(hdd_reanalysis_365d_sa, n = 5)
       + lag(hdd_station_365d, n = 10)
       + lag(precip_365d_sa, n = 8)
-    ),
-    # ETS(log(cases_cumulative) ~ trend("Ad", phi = .5))
+    )
   )
 
 ```
 
 
-Analyze
+
+```{r m2_fit_sj_save}
+#| eval: false
+#| echo: false
+
+saveRDS(fit2.sj, "Report Objects/fit2.sj.RDS")
+
+
+```
+
+
+```{r m2_fit_sj_read}
+#| eval: true
+#| echo: false
+
+fit2.sj <- readRDS("Report Objects/fit2.sj.RDS")
+
+
+```
+
+
+##### Model 3: Prophet with Boosted Errors
+
+####### Iquitos
+
+
+```{r m3_recipe_iq}
+
+recipe_spec_iq <- train %>%
+  as_tibble() %>% 
+  recipe(total_cases ~ ., data = .) %>%
+  step_filter(city == "iq") %>% 
+  step_timeseries_signature(week_start_date) %>% 
+  step_rm(
+    any_of(setdiff(!!vars.y, "total_cases"))
+  ) %>%
+  step_rm(
+    any_of(setdiff(!!vars.id, c("weekofyear", "week_start_date")))
+  ) %>% 
+  step_rm(contains("PC")) %>% 
+  step_rm(
+    contains("am.pm"), contains("hour"), contains("minute"),
+    contains("second"), contains("xts"), contains("day"), contains("susc")
+  ) %>% 
+  step_fourier(week_start_date, period = 52, K = 5) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_lag(all_numeric_predictors(), lag = 1:10) %>%
+  step_normalize(all_numeric_predictors()) %>%
+  step_diff(contains("_sa")) %>% 
+  step_naomit(all_predictors(), total_cases) %>% 
+  step_log(total_cases, offset = 1)
+
+```
+
+
+```{r m3_recipe_view_iq}
+#| echo: false
+#| eval: false
+
+recipe_spec_iq %>% prep() %>% juice() %>% #select(week_start_date, contains("cases")) #%>% View()
+  colnames() %>% sort()
+
+recipe_spec_iq$var_info #%>% View()
+
+
+```
+
+
+```{r m3_spec_iq}
+
+model_spec_iq <- prophet_boost(mtry = tune(), tree_depth = tune(), learn_rate = tune(), min_n = tune()) %>%
+  set_engine("prophet_xgboost", yearly.seasonality = TRUE, weekly.seasonality = TRUE) 
+
+workflow_fit_proph_boost_iq <- workflow() %>% 
+  add_model(model_spec_iq) %>% 
+  add_recipe(recipe_spec_iq)
+
+```
+
+
+```{r m3_tuning_iq}
+#| eval: false
+
+(tuning.grid_iq <- grid_regular(
+  mtry(c(200, 500)),
+  learn_rate(c(-2, -.5)),
+  tree_depth(c(40, 100)),
+  min_n(c(20,30)),
+  levels = c(6, 3, 5, 4)
+))
+
+(folds_iq <- rolling_origin(
+  train %>% filter(city == "iq"), 
+  cumulative = F,
+  initial = 52*4, assess = 50, skip = 60
+))
+
+# Tune model
+fit3.tuning_iq <- workflow_fit_proph_boost_iq %>%
+  tune_grid(folds_iq, grid = tuning.grid_iq)
+
+```
+
+
+```{r m3_tuning_iq_save}
+#| eval: false
+#| echo: false
+
+# collect_notes(fit3.tuning_iq)$note[1]
+# show_notes(.Last.tune.result)
+saveRDS(fit3.tuning_iq, "Report Objects/fit3.tuning_iq.RDS")
+```
+
+
+```{r m3_tuning_iq_read}
+#| eval: true
+#| echo: false
+
+fit3.tuning_iq <- readRDS("Report Objects/fit3.tuning_iq.RDS")
+
+```
+
+
+```{r m3_cv_results_line_iq}
+#| eval: false
+#| echo: false
+
+collect_metrics(fit3.tuning_iq) %>%
+  filter(.metric == "rmse") %>%
+  ggplot(aes(
+    x = learn_rate,
+    y = mean,
+    color = as.factor(mtry)
+  )) +
+  geom_line() +
+  geom_point() +
+  geom_errorbar(aes(ymax = mean + std_err, ymin = mean - std_err), alpha = .25) +
+  scale_x_log10() +
+  facet_grid(tree_depth ~ min_n, scales = "free_x") +
+  scale_y_continuous(labels = label_comma()) +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+
+```
+
+
+```{r m3_cv_results_raster_iq}
+#| fig-height: 6
+
+collect_metrics(fit3.tuning_iq) %>% 
+  filter(.metric == "rmse") %>% 
+  rename(RMSE = mean) %>% 
+  ggplot(aes(
+    x = learn_rate,
+    y = mtry, 
+    fill = RMSE
+  )) +
+  geom_raster(interpolate = T) + 
+  scale_x_log10() +
+  facet_grid(tree_depth ~ min_n, scales = "free_x") +
+  scale_y_continuous(labels = label_comma()) +
+  scale_fill_viridis_c(option = "B", direction = -1) +
+  ggtitle("Heat Map of Cross Validated RMSE facted by tree depth (horizontally) and min_n (vertically)") +
+  theme_bw() +
+  theme(legend.position = "bottom", legend.key.width = unit(2, "cm"))
+
+```
+
+
+```{r m3_final_iq}
+
+(best.param_iq <- select_best(fit3.tuning_iq, "rmse"))
+
+wf.final_iq <- workflow_fit_proph_boost_iq %>% 
+  finalize_workflow(best.param_iq)
+
+fit3.iq <- wf.final_iq %>% 
+  fit(train)
+    
+```
+
+
+
+####### San Jose
+
+
+
+```{r m3_recipe_sj}
+
+recipe_spec_sj <- train %>%
+  as_tibble() %>% 
+  recipe(total_cases ~ ., data = .) %>%
+  step_filter(city == "sj") %>% 
+  step_timeseries_signature(week_start_date) %>% 
+  step_rm(
+    any_of(setdiff(!!vars.y, "total_cases"))
+  ) %>%
+  step_rm(
+    any_of(setdiff(!!vars.id, c("weekofyear", "week_start_date")))
+  ) %>% 
+  step_rm(contains("PC")) %>% 
+  step_rm(
+    contains("am.pm"), contains("hour"), contains("minute"),
+    contains("second"), contains("xts"), contains("day"), contains("susc")
+  ) %>% 
+  step_fourier(week_start_date, period = 52, K = 5) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_lag(all_numeric_predictors(), lag = 1:10) %>%
+  step_normalize(all_numeric_predictors()) %>%
+  step_diff(contains("_sa")) %>% 
+  step_naomit(all_predictors(), total_cases) %>% 
+  step_log(total_cases, offset = 1)
+
+
+```
+
+
+```{r m3_recipe_view_sj}
+#| echo: false
+#| eval: false
+
+recipe_spec_sj %>% prep() %>% juice() %>% #select(week_start_date, contains("cases")) #%>% View()
+  colnames() %>% sort()
+
+recipe_spec_sj$var_info #%>% View()
+
+
+```
+
+
+
+```{r m3_spec_sj}
+
+model_spec_sj <- prophet_boost(mtry = tune(), tree_depth = tune(), learn_rate = tune(), min_n = tune()) %>%
+  set_engine("prophet_xgboost", yearly.seasonality = TRUE, weekly.seasonality = TRUE) 
+
+workflow_fit_proph_boost_sj <- workflow() %>% 
+  add_model(model_spec_sj) %>% 
+  add_recipe(recipe_spec_sj)
+
+```
+
+
+```{r m3_tuning_sj}
+#| eval: false
+
+(tuning.grid_sj <- grid_regular(
+  mtry(c(300, 600)),
+  learn_rate(c(-1, 0)),
+  tree_depth(c(50, 90)),
+  min_n(c(5,20)),
+  # levels = c(2,2,2,2)
+  levels = c(4, 4, 4, 3)
+))
+
+(folds_sj <- rolling_origin(
+  train %>% filter(city == "sj"), 
+  cumulative = F,
+  initial = 52*5, assess = 100, skip = 100
+))
+
+# Tune model
+fit3.tuning_sj <- workflow_fit_proph_boost_sj %>%
+  tune_grid(folds_sj, grid = tuning.grid_sj)
+
+```
+
+```{r m3_tuning_sj_save}
+#| echo: false
+#| eval: false
+
+# collect_notes(fit3.tuning_sj)$note[1]
+# show_notes(.Last.tune.result)
+
+saveRDS(fit3.tuning_sj, "Report Objects/fit3.tuning_sj.RDS")
+
+```
+
+```{r m3_tuning_sj_read}
+#| eval: true
+#| echo: false
+
+fit3.tuning_sj <- readRDS("Report Objects/fit3.tuning_sj.RDS")
+
+```
+
+```{r m3_cv_results_line_sj}
+#| eval: false
+#| echo: false
+
+collect_metrics(fit3.tuning_sj) %>%
+  filter(.metric == "rmse") %>%
+  ggplot(aes(
+    x = learn_rate,
+    y = mean,
+    color = as.factor(mtry)
+  )) +
+  geom_line() +
+  geom_point() +
+  geom_errorbar(aes(ymax = mean + std_err, ymin = mean - std_err), alpha = .25) +
+  scale_x_log10() +
+  facet_grid(tree_depth ~ min_n, scales = "free_x") +
+  scale_y_continuous(labels = label_comma()) +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+
+```
+
+
+```{r m3_cv_results_raster_sj}
+#| fig-height: 6
+
+collect_metrics(fit3.tuning_sj) %>% 
+  filter(.metric == "rmse") %>% 
+  rename(RMSE = mean) %>% 
+  ggplot(aes(
+    x = learn_rate,
+    y = mtry, 
+    fill = RMSE
+  )) +
+  geom_raster(interpolate = T) + 
+  scale_x_log10() +
+  facet_grid(tree_depth ~ min_n, scales = "free_x") +
+  scale_y_continuous(labels = label_comma()) +
+  scale_fill_viridis_c(option = "B", direction = -1) +
+  ggtitle("Heat Map of Cross Validated RMSE facted by tree depth (horizontally) and min_n (vertically)") +
+  theme_bw() +
+  theme(legend.position = "bottom", legend.key.width = unit(2, "cm"))
+
+```
+
+
+```{r m3_final_sj}
+
+
+(best.param_sj <- select_best(fit3.tuning_sj, "rmse"))
+
+
+wf.final_sj <- workflow_fit_proph_boost_sj %>% 
+  finalize_workflow(best.param_sj)
+
+
+fit3.sj <- wf.final_sj %>% 
+  fit(train)
+    
+```
+
+
+
+
+
+#### Model Evaluation
+
+<!-- Metrics used to evaluate the model (e.g., MAE, RMSE, etc.). -->
+<!-- Discuss the validation process. -->
+
+
+
+
+
+## Results
+
+<!-- Model Performance on Training Set. Provide tables or charts illustrating model performance. -->
+
+<!-- Forecast on the Test Set -->
+<!-- Display the forecasts of each model on the test data. -->
+<!-- Compare the performance of the models using the test data. -->
+
+#### Model Performance on Training Set
+
+##### Iquitos
+
+###### Model 1
+
+
+```{r}
+#| fig-height: 3
+
+fit1.iq %>% 
+  gg_tsresiduals(lag_max = 100)
+
+```
+
+
+
+
+###### Model 2
+
+
+```{r}
+#| fig-height: 4
+
+fit2.iq %>% 
+  gg_tsresiduals(lag_max = 100)
+
+```
+
+
+
+###### Model 3
+
+
+
+
+```{r m3_var_imp_iq}
+
+
+fit3.orig.iq <- extract_fit_engine(fit3.iq)
+
+xgboost::xgb.importance(model = fit3.orig.iq$models$model_2) %>%
+  xgboost::xgb.plot.importance(top_n = 20) 
+
+```
+
+
+
+##### San Jose
+
+###### Model 1
 
 ```{r}
 
-fit2.sj %>% report()
+fit1.sj %>% 
+  gg_tsresiduals(lag_max = 100)
 
 ```
+
+
+
+
+###### Model 2
+
 
 ```{r}
 
@@ -330,519 +719,333 @@ fit2.sj %>%
 
 ```
 
-Forecast
-
-```{r}
-
-fx2.sj <- fit2.sj %>% 
-  forecast(valid)
-
-fx2.sj$predicted_cases <- fn_cumulative_to_week(fx2.sj, "sj", train.all, 1)
-
-fx2.sj_accuracy <- fx2.sj %>% 
-  fabletools::accuracy(valid)
-
-fx2.sj_mae_cases <- mae_vec(
-  valid %>% filter(city == "sj") %>% pull(total_cases), 
-  fx2.sj$predicted_cases
-)
-
-fx2.sj %>% 
-  autoplot(valid) + 
-  autolayer(train.all %>% filter(city == "sj", year >= 2005), cases_cumulative)
-
-```
-
-
-```{r}
-
-fx2.sj %>% 
-  as_tibble() %>% 
-  select(yearweek, total_cases, predicted_cases) %>% 
-  rename(actual_cases = total_cases) %>% 
-  pivot_longer(-yearweek, names_to = "Series") %>% 
-  ggplot(aes(x = yearweek, y = value, color = Series)) +
-  geom_line() +
-  theme(
-    legend.position = c(1, .9),
-    legend.text.align = 1,
-    legend.title.align = 1,
-    legend.justification = "right"
-  )
-
-```
-
-
-### Model 3: 
-
-#### Iquitos
-
-Estimation
-
-```{r}
-
-(fit3.iq <- train %>% 
-  filter(city == "iq") %>% 
-  filter(cases_cumulative > 10) %>% 
-  model(
-    fit3a = NNETAR(scale_inputs = TRUE, n_networks = 30, 
-      box_cox(case_rate, .85) ~ 1 #+ weekofyear #+ fourier(K = 1) 
-      + hdd_reanalysis_365d
-      + humidity_rel_avg_4w
-      + humidity_rel_avg_2w
-      + precip_4w + precip_365d
-      + station_diur_temp_rng_c
-      + reanalysis_tdtr_k
-      # + ndvi_ne + ndvi_nw + ndvi_se + ndvi_sw
-      + hdd_station_4w
-      + log(susc.26w / (population - susc.26w))
-      + log(susc.8w / (population - susc.8w))
-    ),
-    fit3b = NNETAR(scale_inputs = TRUE, n_networks = 30, 
-      box_cox(case_rate, .85) ~ 1 #+ weekofyear #+ fourier(K = 1) 
-      + hdd_reanalysis_365d
-      + humidity_rel_avg_4w
-      + humidity_rel_avg_2w
-      + precip_4w + precip_365d
-      + station_diur_temp_rng_c
-      + reanalysis_tdtr_k
-      # + ndvi_ne_sa + ndvi_nw_sa + ndvi_se_sa + ndvi_sw_sa
-      + hdd_station_4w
-      + susc.26w + susc.8w
-    )
-  ))
-
-```
-
-
-Analyze
-
-```{r}
-
-fit3.iq %>% 
-  gg_tsresiduals(lag_max = 100)
-
-```
-
-Forecast
-
-```{r}
-
-fx3.iq <- fit3.iq %>% 
-  forecast(
-    # train.all %>% drop_na() %>% filter(year > 2006),
-    valid %>% filter(city == "iq"),
-    times = 50
-  )
-
-# fx3.iq$predicted_cases <- fn_cumulative_to_week(fx3.iq, "iq", train.all, 1)
-fx3.iq$predicted_cases <- fx3.iq$.mean * fx3.iq$population
-
-(fx3.iq_accuracy <- fx3.iq %>% 
-  fabletools::accuracy(valid))
-
-(fx3.iq_mae_cases <- mae_vec(
-  # train.all %>% drop_na() %>% filter(year >2005) %>% filter(city == "iq") %>% pull(total_cases),
-  valid %>% filter(city == "iq") %>% pull(total_cases),
-  fx3.iq %>% filter(.model == "fit3a") %>% pull(predicted_cases)
-))
-
-fx3.iq %>% 
-  autoplot(valid, level = NULL) + 
-  autolayer(train.all %>% filter(city == "iq", year >= 2007), case_rate)
-
-```
-
-
-```{r}
-
-fx3.iq %>% 
-  as_tibble() %>% 
-  select(yearweek, .model, total_cases, predicted_cases) %>% 
-  rename(actual_cases = total_cases) %>% 
-  pivot_longer(-c(yearweek, .model), names_to = "Series") %>% 
-  ggplot(aes(x = yearweek, y = value, color = interaction(Series, .model))) +
-  geom_line() +
-  theme(
-    legend.position = c(1, .9),
-    legend.text.align = 1,
-    legend.title.align = 1,
-    legend.justification = "right"
-  )
-
-```
 
 
 
-#### San Jose
 
-Estimation
-
-```{r}
-
-fit3.sj <- train %>% 
-  filter(city == "sj") %>% 
-  filter(cases_cumulative > 10) %>% 
-  model(
-    fit3 = ARIMA(
-      box_cox(cases_cumulative, .7) ~ 1 + 
-        fourier(K = 5) + PDQ(D=0,Q=0) +
-        lag(precip_4w, n = 10) +
-        rollmean(reanalysis_tdtr_k_sa, k = 5, fill = NA, align = "right") +
-        lag(hdd_reanalysis_4w_sa * humidity_rel_avg_4w_sa, n = 6)
-      # + PC15 %>% lag(n = 6)
-      # + PC20 %>% lag(n = 1)
-      # + PC1 %>% lag(n = 1)
-      + lag(station_diur_temp_rng_c, n = 5)
-      + lag(hdd_reanalysis_365d_sa, n = 5)
-      + lag(hdd_station_365d, n = 10)
-      + lag(precip_365d_sa, n = 8)
-    ),
-    # ETS(log(cases_cumulative) ~ trend("Ad", phi = .5))
-  )
-
-```
+###### Model 3
 
 
-Analyze
 
-```{r}
-
-fit3.sj %>% report()
-
-```
-
-```{r}
-
-fit3.sj %>% 
-  gg_tsresiduals(lag_max = 100)
-
-```
-
-Forecast
-
-```{r}
-
-fx3.sj <- fit3.sj %>% 
-  forecast(valid)
-
-fx3.sj$predicted_cases <- fn_cumulative_to_week(fx3.sj, "sj", train.all, 1)
-
-fx3.sj_accuracy <- fx3.sj %>% 
-  fabletools::accuracy(valid)
-
-fx3.sj_mae_cases <- mae_vec(
-  valid %>% filter(city == "sj") %>% pull(total_cases), 
-  fx3.sj$predicted_cases
-)
-
-fx3.sj %>% 
-  autoplot(valid) + 
-  autolayer(train.all %>% filter(city == "sj", year >= 2005), cases_cumulative)
-
-```
+```{r m3_var_imp_sj}
 
 
-```{r}
+fit3.orig.sj <- extract_fit_engine(fit3.sj)
 
-fx3.sj %>% 
-  as_tibble() %>% 
-  select(yearweek, total_cases, predicted_cases) %>% 
-  rename(actual_cases = total_cases) %>% 
-  pivot_longer(-yearweek, names_to = "Series") %>% 
-  ggplot(aes(x = yearweek, y = value, color = Series)) +
-  geom_line() +
-  theme(
-    legend.position = c(1, .9),
-    legend.text.align = 1,
-    legend.title.align = 1,
-    legend.justification = "right"
-  )
+xgboost::xgb.importance(model = fit3.orig.sj$models$model_2) %>%
+  xgboost::xgb.plot.importance(top_n = 10) 
 
 ```
 
 
 
 
-### Model 4: Modeltime
+#### Model Performance on Validation Set
 
-#### Iquitos
+##### Iquitos
 
-##### Recipe
+###### Model 1
 
-```{r}
+```{r fx1_valid_iq}
 
-recipe_spec <- train %>%
-  as_tibble() %>% 
-  recipe(total_cases ~ ., data = .) %>%
-  # recipe(case_rate ~ ., data = .) %>% 
-  step_filter(city == "iq") %>% 
-  step_timeseries_signature(week_start_date) %>% 
-  step_rm(
-    any_of(c(
-      setdiff(vars.id, c("weekofyear", "week_start_date")), 
-      setdiff(vars.y, "total_cases")
-    )),
-    contains("PC")
-  ) %>% 
-  step_rm(
-    contains("am.pm"), contains("hour"), contains("minute"),
-    contains("second"), contains("xts"), contains("day"), contains("susc")
-  ) %>% 
-  step_fourier(week_start_date, period = 52, K = 5) %>%
-  step_dummy(all_nominal_predictors()) %>%
-  step_lag(all_numeric_predictors(), lag = 1:10) %>%
-  # step_box_cox(cases_cumulative) %>%
-  # step_diff(cases_cumulative, role = "outcome") %>%
-  step_normalize(all_numeric_predictors()) %>%
-  step_diff(contains("_sa")) %>% 
-  # timetk::step_smooth(
-  #     # all_numeric_predictors(),
-  #     period = 5,
-  #     precipitation_amt_mm, reanalysis_air_temp_k, reanalysis_avg_temp_k,
-  #     reanalysis_min_air_temp_k, reanalysis_precip_amt_kg_per_m2,
-  #     reanalysis_max_air_temp_k, reanalysis_tdtr_k, reanalysis_relative_humidity_percent
-  # ) %>% 
-  step_naomit(all_predictors(), total_cases) %>% 
-  step_log(total_cases, offset = 1)
-
-recipe_spec %>% prep() %>% juice() %>% #select(week_start_date, contains("cases")) #%>% View()
-  colnames() %>% sort()
-
-recipe_spec$var_info %>% View()
-
-```
-
-##### Models
-
-Prophet Boost
-
-```{r}
-
-xg.mtry <- 500
-xg.tree_depth <- 128
-xg.learn_rate <- .01
-xg.min_n <- 2
-
-model_spec <- prophet_boost(mtry = tune(), tree_depth = tune(), learn_rate = tune(), min_n = tune()) %>%
-  set_engine("prophet_xgboost", yearly.seasonality = TRUE, weekly.seasonality = TRUE) 
-
-workflow_fit_proph_boost <- workflow() %>% 
-  add_model(model_spec) %>% 
-  add_recipe(recipe_spec) %>% 
-  fit(as_tibble(train))
+fx1.iq <- fn_standardize_fx(forecast(fit1.iq, valid), the_model = 1, the_city = "iq")
 
 ```
 
 
-##### Modeltime Table & Calibrate & Forecast
+###### Model 2
 
-```{r}
-model_table <- modeltime_table(workflow_fit_proph_boost) 
+```{r fx2_valid_iq}
 
-calibration_table <- model_table %>%
+fx2.iq <- fn_standardize_fx(forecast(fit2.iq, valid), the_model = 2, the_city = "iq")
+
+```
+
+
+###### Model 3
+
+
+```{r fx3_valid_iq}
+
+calibration_table_iq <- modeltime_table(fit3.iq) %>%
   modeltime_calibrate(valid)
 
-calibration_table
-
-
-fx.mt <- calibration_table %>%
+fx3.iq_trans <- calibration_table_iq %>%
   modeltime_forecast(
-    new_data = as_tibble(train.all) %>% filter(city == "iq", year >= 2008), 
-    actual_data = as_tibble(train.all) %>% filter(city == "iq", year >= 2008)
+    new_data = as_tibble(train.all) %>% filter(city == "iq", year >= 2008)
   )
 
-fx.mt %>%
-  plot_modeltime_forecast(.interactive = FALSE, .conf_interval_show = FALSE)
 
-calibration_table %>%
-  modeltime_accuracy()
+fx3.iq <- fn_standardize_fx(fx3.iq_trans, the_model = 3, the_city = "iq")
 
-```
 
-Tuning
+# fx3.iq_trans %>%
+#   plot_modeltime_forecast(.interactive = FALSE, .conf_interval_show = TRUE)
+# 
+# calibration_table %>%
+#   modeltime_accuracy()
 
-```{r}
-
-# parallel::stopCluster(cl)
-(all_cores <- parallel::detectCores())
-(cl <- makePSOCKcluster(all_cores))
-registerDoParallel(cl)
 
 ```
 
 
-```{r}
+###### Ensemble
 
-model_spec <- prophet_boost(mtry = tune(), tree_depth = tune(), learn_rate = tune(), min_n = tune()) %>%
-  set_engine("prophet_xgboost", yearly.seasonality = TRUE, weekly.seasonality = TRUE) 
 
-workflow_fit_proph_boost <- workflow() %>% 
-  add_model(model_spec) %>% 
-  add_recipe(recipe_spec)
+```{r fx_valid_avg_iq}
 
-(tuning.grid <- grid_regular(
-  mtry(c(200, 600)),
-  learn_rate(c(-4, -1)),
-  tree_depth(c(1, 100)),
-  min_n(),
-  levels = c(4, 4, 4, 4)
-))
+fx.iq <- bind_rows(
+  fx1.iq,
+  fx2.iq,
+  fx3.iq
+)
 
-# folds <- vfold_cv(data.train, v = 2)
-(folds <- rolling_origin(
-  train_sub, 
-  cumulative = F,
-  initial = 52*4, assess = 50, skip = 50
-))
+fx.iq_avg <- fx.iq %>% 
+  as_tibble() %>% 
+  group_by(city, yearweek) %>% 
+  summarize(across(contains("predicted"), \(x){mean(x, na.rm = T)})) %>% 
+  arrange(yearweek) %>% 
+  mutate(.model = "ensemble") %>% 
+  tsibble(index = yearweek, key = c(city, .model))
 
-# Tune model
-tuning.lm <- workflow_fit_proph_boost %>%
-  tune_grid(folds, grid = tuning.grid)
+fx.iq <- bind_rows(fx.iq, fx.iq_avg)
 
-collect_notes(tuning.lm)$note[1]# %>% View()
-show_notes(.Last.tune.result)
-
-# Tuning Results
-collect_metrics(tuning.lm) #%>% View()
-collect_metrics(tuning.lm) %>% 
-  filter(.metric == "rmse") %>% 
-  ggplot(aes(
-    # x = penalty, 
-    x = learn_rate,
-    y = mean, 
-    # color = interaction(learn_rate, trees)
-    color = as.factor(mtry)
-  )) +
-  geom_line() + 
-  geom_point() +
-  geom_errorbar(aes(ymax = mean + std_err, ymin = mean - std_err)) +
-  scale_x_log10() +
-  # facet_grid(tree_depth ~ learn_rate, scales = "free_x") +
-  scale_y_continuous(labels = label_comma()) +
-  theme_bw() +
-  theme(legend.position = "bottom")
 
 ```
 
 
+###### Comparison
+
+```{r fx_valid_plot_iq}
+
+fx.iq %>% 
+  autoplot(predicted_cases) + 
+  autolayer(
+    valid %>% filter(city == "iq"), 
+    total_cases
+  )
+
+```
+
+
+```{r fx_valid_mae_iq}
+
+valid.mae_iq <- fx.iq %>% 
+  left_join(y = valid %>% select(city, yearweek, total_cases)) %>% 
+  as_tibble() %>% 
+  group_by(.model) %>% 
+  summarize(
+    MAE = MAE(predicted_cases - total_cases)
+  )
+
+
+```
+
+
+
+##### San Jose
+
+###### Model 1
+
+```{r fx1_valid_sj}
+
+fx1.sj <- fn_standardize_fx(forecast(fit1.sj, valid), the_model = 1, the_city = "sj")
+
+```
+
+
+###### Model 2
+
+```{r fx2_valid_sj}
+
+fx2.sj <- fn_standardize_fx(forecast(fit2.sj, valid), the_model = 2, the_city = "sj")
+
+```
+
+
+###### Model 3
+
+
+```{r fx3_valid_sj}
+
+calibration_table_sj <- modeltime_table(fit3.sj) %>%
+  modeltime_calibrate(valid)
+
+fx3.sj_trans <- calibration_table_sj %>%
+  modeltime_forecast(
+    new_data = as_tibble(train.all) %>% filter(city == "sj", year >= year(ymd(valid.start.sj)))
+    # actual_data = as_tibble(train.all) %>% filter(city == "sj", year >= 2008)
+  )
+
+fx3.sj <- fn_standardize_fx(fx3.sj_trans, the_model = 3, the_city = "sj")
+
+
+# fx3.sj_trans %>%
+#   plot_modeltime_forecast(.interactive = FALSE, .conf_interval_show = TRUE)
+# 
+# calibration_table %>%
+#   modeltime_accuracy()
+
+
+```
+
+
+###### Ensemble
+
+
+```{r fx_valid_avg_sj}
+
+fx.sj <- bind_rows(
+  fx1.sj,
+  fx2.sj,
+  fx3.sj
+)
+
+fx.sj_avg <- fx.sj %>% 
+  as_tibble() %>% 
+  group_by(city, yearweek) %>% 
+  summarize(across(contains("predicted"), \(x){mean(x, na.rm = T)})) %>% 
+  arrange(yearweek) %>% 
+  mutate(.model = "ensemble") %>% 
+  tsibble(index = yearweek, key = c(city, .model))
+
+fx.sj <- bind_rows(fx.sj, fx.sj_avg)
+
+
+```
+
+
+###### Comparison
+
+```{r fx_valid_plot_sj}
+
+fx.sj %>% 
+  autoplot(predicted_cases) + 
+  autolayer(
+    valid %>% filter(city == "sj"), 
+    total_cases
+  )
+
+```
+
+
+```{r fx_valid_mae_sj}
+
+valid.mae_sj <- fx.sj %>% 
+  left_join(y = valid %>% select(city, yearweek, total_cases) %>% filter(city == "sj")) %>% 
+  as_tibble() %>% 
+  group_by(.model) %>% 
+  summarize(
+    MAE = MAE(predicted_cases - total_cases)
+  )
+
+
+```
+
+
+#### Fit Models on Full Training Set
+
 ```{r}
 
-fx.mt.retrans <- fx.mt %>% 
-  group_by(.model_desc) %>%
-  arrange(.index) %>%
-  mutate(
-    # .value = .value - lag(.value)
-    .value = exp(.value) - 1,
-    # .value = cumsum(.value)
+fit1.iq_final <- fit1.iq %>% 
+  refit(train.all)
+
+fit2.iq_final <- fit2.iq %>% 
+  refit(train.all)
+
+fit3.iq_final <- wf.final_iq %>% 
+  fit(train.all)
+
+
+fit1.sj_final <- fit1.sj %>% 
+  refit(train.all)
+
+fit2.sj_final <- fit2.sj %>% 
+  refit(train.all)
+
+fit3.sj_final <- wf.final_sj %>% 
+  fit(train.all)
+
+```
+
+#### Forecast on Test Set
+
+
+##### Iquitos
+
+```{r}
+
+fx1.test.iq <- fit1.iq_final %>% 
+  forecast(test) %>% 
+  fn_standardize_fx(., 1, "iq")
+
+fx2.test.iq <- fit2.iq_final %>% 
+  forecast(test) %>% 
+  fn_standardize_fx(., 2, "iq")
+
+fx3.test.iq <- modeltime_table(fit3.iq_final) %>%
+  modeltime_calibrate(test) %>%
+  modeltime_forecast(
+    new_data = as_tibble(test) %>% filter(city == "iq")
   ) %>% 
-  ungroup()
+  fn_standardize_fx(., 3, "iq")
 
 
-
-fx.mt.retrans %>%
-  ggplot(aes(x = .index, y = .value, color = .model_desc)) +
-  geom_line() +
-  ggtitle(paste0(
-    "MAE: ", 
-    fx.mt.retrans %>% 
-      select(-.model_desc, -.model_id, -contains("conf")) %>% 
-      pivot_wider(names_from = .key, values_from = .value) %>% 
-      summarize(
-        mae_vec(actual, prediction)
-      ) %>% 
-      pull() %>% 
-      round(digits = 2)
-  ))
-
+fx.test.iq <- bind_rows(fx1.test.iq, fx2.test.iq, fx3.iq)
 
 
 ```
 
-```{r}
 
-
-fit.boost.orig <- extract_fit_engine(workflow_fit_proph_boost)
-
-xgboost::xgb.importance(model = fit.boost.orig$models$model_2) %>% #View()
-  xgboost::xgb.plot.importance(top_n = 20) 
-
-```
-
-
-### Ensemble
-
-#### Iquitos
-
-```{r}
-
-fit.iq <- full_join(fit1.iq, fit2.iq) %>% 
-  mutate(ensemble = (fit1 + fit2) / 2)
-
-fx.iq <- fit.iq %>% 
-  forecast(valid)
-
-fx.iq %>% 
-  fabletools::accuracy(valid)
-
-fx.iq %>% 
-  autoplot(valid)
-
-```
-
-
-#### San Jose
+##### San Jose
 
 
 ```{r}
 
-fit.sj <- full_join(fit1.sj, fit2.sj) %>% 
-  mutate(ensemble = (fit1 + fit2) / 2)
+fx1.test.sj <- fit1.sj_final %>% 
+  forecast(test) %>% 
+  fn_standardize_fx(., 1, "sj")
 
-fx.sj <- fit.sj %>% 
-  forecast(valid)
+fx2.test.sj <- fit2.sj_final %>% 
+  forecast(test) %>% 
+  fn_standardize_fx(., 2, "sj")
 
-fx.sj %>% 
-  fabletools::accuracy(valid)
-
-fx.sj %>% 
-  autoplot(valid)
+fx3.test.sj <- modeltime_table(fit3.sj_final) %>%
+  modeltime_calibrate(test) %>%
+  modeltime_forecast(
+    new_data = as_tibble(test) %>% filter(city == "sj")
+  ) %>% 
+  fn_standardize_fx(., 3, "sj")
 
 ```
 
 
 
-## Comparison
+## Discussion
 
-### Iquitos
+<!-- Model Comparisons: Discuss the strengths and weaknesses of each model in the context of the study. -->
+
+<!-- Implications: Potential impact of accurate forecasts on healthcare planning and interventions. -->
+
+
+<!-- Limitations: Any limitations of your study, be it in data, methodology, or the models. -->
+
+
+<!-- Future Work: Suggestions for further research or improvement in the forecasting models. -->
+
+
+## Conclusion
+
+<!-- Summary of Key Findings -->
+
+<!-- Final Thoughts on the Potential of Predictive Analytics in Forecasting Dengue Cases. -->
+
+
+
+
 
 ```{r}
-
-tibble(
-  Model1 = fx1.iq_mae_cases,
-  Model2 = fx2.iq_mae_cases
-) %>% 
-  pivot_longer(everything(), names_to = "Model", values_to = "MAE")
-
+#| echo: false
+parallel::stopCluster(cl)
 ```
 
-
-### San Jose
-
-```{r}
-
-tibble(
-  Model1 = fx1.sj_mae_cases,
-  Model2 = fx2.sj_mae_cases
-) %>% 
-  pivot_longer(everything(), names_to = "Model", values_to = "MAE")
-
-```
-
-
-## Forecast on Test Set
-
-### Iquitos
-
-
-### San Jose
