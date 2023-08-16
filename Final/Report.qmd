@@ -208,7 +208,7 @@ fit2.iq <- train %>%
       box_cox(cases_cumulative, .7) ~ 1 + 
         fourier(K = 5) + PDQ(D=0,Q=0) +
         lag(precip_4w, n = 10) +
-        rollmean(reanalysis_tdtr_k_sa, k = 5, fill = NA, align = "right") +
+        # rollmean(reanalysis_tdtr_k_sa, k = 5, fill = NA, align = "right") +
         lag(hdd_reanalysis_4w_sa * humidity_rel_avg_4w_sa, n = 6)
       # + PC15 %>% lag(n = 6)
       # + PC20 %>% lag(n = 1)
@@ -744,49 +744,26 @@ xgboost::xgb.importance(model = fit3.orig.sj$models$model_2) %>%
 
 ##### Iquitos
 
-###### Model 1
 
-```{r fx1_valid_iq}
+```{r fx_valid_iq}
 
 fx1.iq <- fn_standardize_fx(forecast(fit1.iq, valid), the_model = 1, the_city = "iq")
-
-```
-
-
-###### Model 2
-
-```{r fx2_valid_iq}
-
 fx2.iq <- fn_standardize_fx(forecast(fit2.iq, valid), the_model = 2, the_city = "iq")
-
-```
-
-
-###### Model 3
-
-
-```{r fx3_valid_iq}
 
 calibration_table_iq <- modeltime_table(fit3.iq) %>%
   modeltime_calibrate(valid)
 
 fx3.iq_trans <- calibration_table_iq %>%
   modeltime_forecast(
-    new_data = as_tibble(train.all) %>% filter(city == "iq", year >= 2008)
+    # new_data = as_tibble(train.all) %>% filter(city == "iq", year >= 2008)
+    new_data = as_tibble(valid) %>% filter(city == "iq")
   )
 
 
 fx3.iq <- fn_standardize_fx(fx3.iq_trans, the_model = 3, the_city = "iq")
 
-
-# fx3.iq_trans %>%
-#   plot_modeltime_forecast(.interactive = FALSE, .conf_interval_show = TRUE)
-# 
-# calibration_table %>%
-#   modeltime_accuracy()
-
-
 ```
+
 
 
 ###### Ensemble
@@ -830,13 +807,13 @@ fx.iq %>%
 
 ```{r fx_valid_mae_iq}
 
-valid.mae_iq <- fx.iq %>% 
+(valid.mae_iq <- fx.iq %>% 
   left_join(y = valid %>% select(city, yearweek, total_cases)) %>% 
   as_tibble() %>% 
   group_by(.model) %>% 
   summarize(
     MAE = MAE(predicted_cases - total_cases)
-  )
+  ))
 
 
 ```
@@ -845,49 +822,26 @@ valid.mae_iq <- fx.iq %>%
 
 ##### San Jose
 
-###### Model 1
 
-```{r fx1_valid_sj}
+
+```{r fx_valid_sj}
 
 fx1.sj <- fn_standardize_fx(forecast(fit1.sj, valid), the_model = 1, the_city = "sj")
-
-```
-
-
-###### Model 2
-
-```{r fx2_valid_sj}
-
 fx2.sj <- fn_standardize_fx(forecast(fit2.sj, valid), the_model = 2, the_city = "sj")
-
-```
-
-
-###### Model 3
-
-
-```{r fx3_valid_sj}
 
 calibration_table_sj <- modeltime_table(fit3.sj) %>%
   modeltime_calibrate(valid)
 
 fx3.sj_trans <- calibration_table_sj %>%
   modeltime_forecast(
-    new_data = as_tibble(train.all) %>% filter(city == "sj", year >= year(ymd(valid.start.sj)))
-    # actual_data = as_tibble(train.all) %>% filter(city == "sj", year >= 2008)
+    # new_data = as_tibble(train.all) %>% filter(city == "sj", year >= year(ymd(valid.start.sj)))
+    new_data = as_tibble(valid) %>% filter(city == "sj")
   )
 
 fx3.sj <- fn_standardize_fx(fx3.sj_trans, the_model = 3, the_city = "sj")
 
-
-# fx3.sj_trans %>%
-#   plot_modeltime_forecast(.interactive = FALSE, .conf_interval_show = TRUE)
-# 
-# calibration_table %>%
-#   modeltime_accuracy()
-
-
 ```
+
 
 
 ###### Ensemble
@@ -931,13 +885,13 @@ fx.sj %>%
 
 ```{r fx_valid_mae_sj}
 
-valid.mae_sj <- fx.sj %>% 
+(valid.mae_sj <- fx.sj %>% 
   left_join(y = valid %>% select(city, yearweek, total_cases) %>% filter(city == "sj")) %>% 
   as_tibble() %>% 
   group_by(.model) %>% 
   summarize(
     MAE = MAE(predicted_cases - total_cases)
-  )
+  ))
 
 
 ```
@@ -945,7 +899,7 @@ valid.mae_sj <- fx.sj %>%
 
 #### Fit Models on Full Training Set
 
-```{r}
+```{r fit_final}
 
 fit1.iq_final <- fit1.iq %>% 
   refit(train.all)
@@ -973,7 +927,7 @@ fit3.sj_final <- wf.final_sj %>%
 
 ##### Iquitos
 
-```{r}
+```{r fx_test_iq}
 
 fx1.test.iq <- fit1.iq_final %>% 
   forecast(test) %>% 
@@ -991,7 +945,17 @@ fx3.test.iq <- modeltime_table(fit3.iq_final) %>%
   fn_standardize_fx(., 3, "iq")
 
 
-fx.test.iq <- bind_rows(fx1.test.iq, fx2.test.iq, fx3.iq)
+fx.test.iq <- bind_rows(fx1.test.iq, fx2.test.iq, fx3.test.iq)
+
+fx.test.iq_avg <- fx.test.iq %>% 
+  as_tibble() %>% 
+  group_by(city, yearweek) %>% 
+  summarize(across(contains("predicted"), \(x){mean(x, na.rm = T)})) %>% 
+  arrange(yearweek) %>% 
+  mutate(.model = "ensemble") %>% 
+  tsibble(index = yearweek, key = c(city, .model))
+
+fx.test.iq <- bind_rows(fx.test.iq, fx.test.iq_avg)
 
 
 ```
@@ -1000,7 +964,7 @@ fx.test.iq <- bind_rows(fx1.test.iq, fx2.test.iq, fx3.iq)
 ##### San Jose
 
 
-```{r}
+```{r fx_test_sj}
 
 fx1.test.sj <- fit1.sj_final %>% 
   forecast(test) %>% 
@@ -1017,9 +981,83 @@ fx3.test.sj <- modeltime_table(fit3.sj_final) %>%
   ) %>% 
   fn_standardize_fx(., 3, "sj")
 
+
+fx.test.sj <- bind_rows(fx1.test.sj, fx2.test.sj, fx3.test.sj)
+
+fx.test.sj_avg <- fx.test.sj %>% 
+  as_tibble() %>% 
+  group_by(city, yearweek) %>% 
+  summarize(across(contains("predicted"), \(x){mean(x, na.rm = T)})) %>% 
+  arrange(yearweek) %>% 
+  mutate(.model = "ensemble") %>% 
+  tsibble(index = yearweek, key = c(city, .model))
+
+fx.test.sj <- bind_rows(fx.test.sj, fx.test.sj_avg)
+
 ```
 
 
+```{r fx_test_save}
+#| eval: true
+#| echo: false
+
+fx.test_list <- bind_rows(fx.test.iq, fx.test.sj) %>% 
+  # left_join(y = test %>% select(city, yearweek, year, weekofyear)) %>% 
+  mutate(
+    year = year(yearweek),
+    # weekofyear = week(yearweek)
+    weekofyear = (as.Date(yearweek) + days(1)) %>% week
+  ) %>%
+  rename(total_cases = predicted_cases) %>% 
+  as_tibble() %>%
+  # filter(yearweek >= yearweek(ymd(test.start.sj))) %>% 
+  select(.model, city, yearweek, year, weekofyear, total_cases) %>%
+  split(~.model) 
+
+x <- fx.test_list[[1]]
+fx.test_list %>%
+  lapply(., \(x){
+    the_model <- x$.model[1]
+    
+    sub_format <- read_csv(file.path("Data/submission_format.csv")) %>% 
+      select(-total_cases)
+    
+    submission <- x %>% 
+      as_tibble() %>% 
+      select(-.model) %>% 
+      mutate(
+        city = factor(city, levels = c("sj", "iq"))
+      ) %>% 
+      arrange(city, yearweek) 
+    
+    submission %>% 
+      right_join(y = sub_format) %>% 
+      select(city, year, weekofyear, total_cases) %>% 
+      replace_na(list(total_cases = 2)) %>% 
+      write_csv(., file.path("Data/Test Forecast", paste0("Submission_", the_model, ".csv")))
+  })
+
+
+
+```
+
+
+
+```{r fx_test_plot}
+
+bind_rows(
+  fx.test.iq, fx.test.sj, 
+  train.all %>% select(city, yearweek, total_cases)
+) %>% 
+  as_tibble() %>% 
+  filter(year(yearweek) >= 2004) %>% 
+  pivot_longer(c(predicted_cases, total_cases), names_to = "series", values_to = "cases") %>% 
+  filter(!is.na(cases)) %>% 
+  ggplot(aes(x = yearweek, y = cases, color = interaction(.model, series))) +
+  geom_line() +
+  facet_grid(city ~ ., scales = "free")
+
+```
 
 ## Discussion
 
