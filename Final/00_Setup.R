@@ -57,7 +57,7 @@
   }
   
   
-  fn_cumulative_to_week <- function(the_fable, the_city, the_data = train.all, adjust_fx = 0){
+  fn_cumulative_to_week <- function(the_fable, the_col, the_city, the_data = train.all, adjust_fx = 0){
     
     fx_start <- the_fable %>% 
       as_tibble() %>% 
@@ -70,13 +70,90 @@
       pull(cases_cumulative) %>% 
       last()
     
-    weekly <- the_fable$.mean - lag(the_fable$.mean, default = last_val)
+    # weekly <- the_fable$.mean - lag(the_fable$.mean, default = last_val)
+    
+    weekly <- pull(the_fable[,the_col]) - lag(pull(the_fable[,the_col]), default = last_val)
     
     if(adjust_fx == 1){
       weekly <- ifelse(weekly < 0, 0, weekly)
     }
     
     return(weekly)
+  }
+  
+  
+  fn_standardize_fx <- function(the_fx, the_model, the_city){
+    
+    if(the_model == 1){
+      fx.tbl <- the_fx %>% 
+        select(city, .model, yearweek, cases_cumulative, .mean) %>% 
+        hilo(95) %>% 
+        mutate(
+          predicted_cum_lo = `95%`$lower,
+          predicted_cum_hi = `95%`$upper
+        )
+      
+      fx.tbl$predicted_cases <- fn_cumulative_to_week(fx.tbl, ".mean", the_city, train.all, 1)
+      fx.tbl$predicted_cases_lo <- fn_cumulative_to_week(fx.tbl, "predicted_cum_lo", the_city, train.all, 1)
+      fx.tbl$predicted_cases_hi <- fn_cumulative_to_week(fx.tbl, "predicted_cum_hi", the_city, train.all, 1)
+      
+      fx.tbl %>% 
+        select(-contains("cum"), -`95%`, -.mean) %>% 
+        return()
+      
+    } else if(the_model == 2){
+     
+      fx.tbl <- the_fx %>% 
+        select(city, .model, yearweek, cases_cumulative, .mean) %>% 
+        hilo(95) %>% 
+        mutate(
+          predicted_cum_lo = `95%`$lower,
+          predicted_cum_hi = `95%`$upper
+        )
+      
+      fx.tbl$predicted_cases <- fn_cumulative_to_week(fx.tbl, ".mean", the_city, train.all, 1)
+      fx.tbl$predicted_cases_lo <- fn_cumulative_to_week(fx.tbl, "predicted_cum_lo", the_city, train.all, 1)
+      fx.tbl$predicted_cases_hi <- fn_cumulative_to_week(fx.tbl, "predicted_cum_hi", the_city, train.all, 1)
+      
+      fx.tbl %>% 
+        select(-contains("cum"), -`95%`, -.mean) %>% 
+        return()
+       
+    } else if(the_model == 3){
+      
+
+      if(the_city == "iq"){
+        the_date <- ymd(valid.start.iq) 
+      } else{
+        the_date <- ymd(valid.start.sj)
+      }
+      
+      the_fx %>% 
+        group_by(.model_desc) %>%
+        arrange(.index) %>%
+        mutate(.value = exp(.value) - 1) %>% 
+        ungroup() %>% 
+        mutate(
+          city = the_city,
+          .model = "fit3",
+          yearweek = yearweek(.index)
+        ) %>% 
+        rename(
+          predicted_cases = .value, 
+          predicted_cases_lo = .conf_lo,
+          predicted_cases_hi = .conf_hi
+        ) %>% 
+        filter(.index >= year(the_date)) %>%
+        select(city, .model, yearweek, predicted_cases, predicted_cases_lo, predicted_cases_hi) %>% 
+        mutate(
+          across(c(predicted_cases, predicted_cases_lo, predicted_cases_hi), \(x){pmax(x, 0)})
+        ) %>% 
+        tsibble(index = yearweek, key = c(city, .model)) %>% 
+        return()
+      
+    }
+    
+    
   }
 }
 
@@ -422,6 +499,14 @@
   vars.x.sa <- vars.x[str_detect(vars.x, "_sa")]
   vars.x.roll <- vars.x[str_detect(vars.x, "_[0-9]+[wd]_")]
   
+  
+  train.start.iq <- as_tibble(train) %>% filter(city == "iq") %>% summarize(first(week_start_date)) %>% pull()
+  valid.start.iq <- as_tibble(valid) %>% filter(city == "iq") %>% summarize(first(week_start_date)) %>% pull()
+  test.start.iq <- as_tibble(test) %>% filter(city == "iq") %>% summarize(first(week_start_date)) %>% pull()
+  
+  train.start.sj <- as_tibble(train) %>% filter(city == "sj") %>% summarize(first(week_start_date)) %>% pull()
+  valid.start.sj <- as_tibble(valid) %>% filter(city == "sj") %>% summarize(first(week_start_date)) %>% pull()
+  test.start.sj <- as_tibble(test) %>% filter(city == "sj") %>% summarize(first(week_start_date)) %>% pull()
   
   years_with_bgn <- train %>% 
     filter(weekofyear==1) %>% 
