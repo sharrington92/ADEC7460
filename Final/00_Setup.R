@@ -66,7 +66,7 @@
     
     last_val <- the_data %>% 
       filter(city == the_city) %>% 
-      filter(yearweek < fx_start) %>% 
+      filter(yearweek < fx_start) %>% as_tibble() %>% View()
       pull(cases_cumulative) %>% 
       last()
     
@@ -94,6 +94,7 @@
         )
       
       fx.tbl$predicted_cases <- fn_cumulative_to_week(fx.tbl, ".mean", the_city, train.all, 1)
+      fx.tbl$predicted_cases[1:3] <- 5
       fx.tbl$predicted_cases_lo <- fn_cumulative_to_week(fx.tbl, "predicted_cum_lo", the_city, train.all, 1)
       fx.tbl$predicted_cases_hi <- fn_cumulative_to_week(fx.tbl, "predicted_cum_hi", the_city, train.all, 1)
       
