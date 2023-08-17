@@ -1,0 +1,545 @@
+---
+title: "Dengue Fever Forecasting"
+author: "Shaun Harrington"
+format: 
+  html:
+    page-layout: full
+    code-fold: true
+    theme: yeti
+    embed-resources: true
+execute:
+  warning: false
+  error: false
+  echo: false
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup}
+#|eval: true
+#|echo: false
+
+# sandstone
+
+library(tidyverse)
+library(lubridate)
+library(fpp3)
+library(zoo)
+# library(tidymodels)
+require(timetk)
+# require(randomForest)
+# require(xgboost)
+# require(doParallel)
+library(modeltime)
+library(scales)
+
+if(!stringr::str_detect(basename(getwd()), "Time Series") & stringr::str_detect(dirname(getwd()), "Time Series")){
+    repeat{
+      setwd("../")
+      if(stringr::str_detect(basename(getwd()), "Time Series")){
+        break
+      }
+    }
+  }
+  
+if(basename(getwd()) != "Final") setwd(file.path(getwd(), "Final"))
+
+theme_set(theme_bw())
+
+# source(file.path("00_Setup.R"))
+
+# 
+# (all_cores <- parallel::detectCores())
+# (cl <- makePSOCKcluster(all_cores))
+# registerDoParallel(cl)
+
+train <- readRDS("Report Objects/train.RDS")
+train.all <- readRDS("Report Objects/train.all.RDS")
+valid <- readRDS("Report Objects/valid.RDS")
+test <- readRDS("Report Objects/test.RDS")
+
+
+fit1.iq <- readRDS("Report Objects/fit1.iq.RDS")
+fit1.sj <- readRDS("Report Objects/fit1.sj.RDS")
+
+fit2.iq <- readRDS("Report Objects/fit2.iq.RDS")
+fit2.sj <- readRDS("Report Objects/fit2.sj.RDS")
+
+fit3.iq <- readRDS("Report Objects/fit3.iq.RDS")
+fit3.sj <- readRDS("Report Objects/fit3.sj.RDS")
+
+vars.id <- c("yearweek", "year", "city", "weekofyear", "week_start_date", "is_test")
+
+train.start.iq <- as_tibble(train) %>% filter(city == "iq") %>% summarize(first(week_start_date)) %>% pull()
+valid.start.iq <- as_tibble(valid) %>% filter(city == "iq") %>% summarize(first(week_start_date)) %>% pull()
+test.start.iq <- as_tibble(test) %>% filter(city == "iq") %>% summarize(first(week_start_date)) %>% pull()
+test.end.iq <- as_tibble(test) %>% filter(city == "iq") %>% summarize(last(week_start_date)) %>% pull()
+
+train.start.sj <- as_tibble(train) %>% filter(city == "sj") %>% summarize(first(week_start_date)) %>% pull()
+valid.start.sj <- as_tibble(valid) %>% filter(city == "sj") %>% summarize(first(week_start_date)) %>% pull()
+test.start.sj <- as_tibble(test) %>% filter(city == "sj") %>% summarize(first(week_start_date)) %>% pull()
+test.end.sj <- as_tibble(test) %>% filter(city == "sj") %>% summarize(last(week_start_date)) %>% pull()
+
+fx_valid.iq <- readRDS("Report Objects/fx_valid.iq.RDS")
+fx_valid.sj <- readRDS("Report Objects/fx_valid.sj.RDS")
+
+fx.test <- readRDS("Report Objects/fx_test.RDS")
+
+
+mae.valid <- bind_rows(fx_valid.iq, fx_valid.sj) %>% 
+  left_join(y = train.all %>% select(city, yearweek, total_cases)) %>% 
+  as_tibble() %>% 
+  group_by(city, .model) %>% 
+  summarize(mae = MAE(predicted_cases - total_cases)) %>% 
+  ungroup()
+
+```
+
+
+::: {.panel-tabset}
+
+## Data Exploration
+
+::: {layout="[ [1], [1,1] ]"}
+
+::: {.panel-tabset}
+
+### Weekly Cases
+
+The original series is quite volatile and the exponential characteristics are plainly visible. 
+
+```{r ts_plot_cases}
+#| fig-width: 12
+
+train %>% 
+  autoplot(total_cases) +
+  ggtitle("Weekly Dengue Fever Cases") +
+  theme(legend.position = "bottom")
+
+```
+
+
+### Case Rate
+
+Using the case rate ($\frac{Total Cases}{Population}) makes the two series comparable between cities but the exponential nature is still present.
+
+```{r ts_plot_caserate}
+#| fig-width: 12
+
+train %>% 
+  autoplot(case_rate) +
+  scale_y_continuous(labels = label_percent()) +
+  ggtitle("Weekly Dengue Fever Case Rate") +
+  theme(legend.position = "bottom")
+
+```
+
+### Case Rate, Transformed
+
+A logit transformation aids considerably with the exponential nature of the series.
+
+```{r ts_plot_caserate_trans}
+#| fig-width: 12
+
+train.all %>% 
+  autoplot(case_rate + .00001) +
+  scale_y_continuous(labels = label_percent(), trans = "logit") +
+  ggtitle("Weekly Dengue Fever Case Rate, Logit Transformed") +
+  facet_wrap(city ~ ., scales = "free") +
+  theme(legend.position = "none")
+
+```
+
+:::
+
+### Seasonality
+
+```{r plot_seas}
+
+train %>% 
+  gg_season(case_rate) +
+  scale_y_continuous(labels = label_percent()) +
+  theme(legend.position = "bottom")
+
+```
+
+
+### Decomposition
+
+```{r plot_decomp}
+
+train %>% 
+  model(STL(case_rate)) %>% 
+  components() %>% 
+  autoplot() +
+  scale_y_continuous(labels = label_percent()) +
+  theme(legend.position = "bottom")
+
+```
+
+
+:::
+
+
+## Feature Engineering
+
+
+
+* Growing Degree Days: sum(max(Average temperature - baseline, 0))
+* Rolling averages & sums: precipitation, GDD, humidity
+* Seasonally adjusted values (STL decomposition)
+* Principal components (little productivity though)
+
+
+
+::: {.panel-tabset}
+
+### Time Plots
+
+::: {layout="[ [1], [1] ]"}
+
+* Cases seem positively correlated with warmer, wetter years.
+
+```{r}
+#| fig-width: 12
+
+ train %>% 
+  mutate(across(
+    c(reanalysis_relative_humidity_percent),
+    \(x){rollmean(x, k = 4, fill = NA, align = "right")}
+  )) %>%
+  pivot_longer(-c(any_of(c(vars.id, "days_in_week", "is_missing"))), names_to = "variable") %>% 
+  filter(variable %in% c(
+    "case_rate", 
+    "hdd_reanalysis_365d",
+    "precip_4w", 
+    "reanalysis_relative_humidity_percent"
+  )) %>% 
+  ggplot(aes(x = yearweek, y = value, color = variable)) + 
+  geom_line() +
+  geom_vline(xintercept = as.Date("1994-08-15"), linetype = "dashed", color = "gray30") +
+  geom_vline(xintercept = as.Date("1998-06-15"), linetype = "dashed", color = "gray30") +
+  # geom_vline(
+  #   xintercept = seq.Date(from = as.Date("1990-07-01"), to = as.Date("2015-07-01"), by = "1 year"), 
+  #   linetype = "dotted", color = "red4", alpha = .15, linewidth = .5
+  # ) +
+  facet_grid(variable ~ city, scales = "free") +
+  theme(
+    legend.position = "none",
+    axis.title = element_blank()
+  )
+
+```
+
+
+::: {.panel-sidebar}
+
+> hdd_reanalysis_365d: the rolling 365-day sum of Growing Degree Days.
+
+> precip_4w: rolling 4-week sum of precipitation.
+
+> reanalysis_relative_humidity_percent: rolling 4-week average humidity level.
+
+:::
+
+:::
+
+
+### Complex nature
+
+
+```{r}
+#| fig-width: 12
+#| fig-height: 6
+
+L = 5
+train %>%
+  mutate(
+    humidity_rel_avg_4w_cut = cut_number(humidity_rel_avg_4w, n = 4) %>% lag(n = L),
+  ) %>% drop_na() %>% 
+  ggplot(aes(
+    x = lag(precip_4w_sa, n = L), 
+    y = lag(hdd_station_4w_sa, n = L), 
+    color = total_cases_scaled, alpha = total_cases_scaled
+  )) +
+  geom_point(size = 3) +
+  facet_grid(city ~ humidity_rel_avg_4w_cut, scales = "free", drop = T) +
+  scale_color_viridis_c() +
+  xlab("Rolling 4-week Precipitation, Seasonally Adjusted with 5 week lag") +
+  ylab("Rolling 4-week Growing Degree Days, Seasonally Adjusted with 5 week lag") +
+  ggtitle(
+    "Interaction of Precipitation and Growing Degree Days Influencing Dengue Fever Cases Across Humidity Intervals"
+  ) +
+  theme(
+    legend.position = "none",
+    axis.title = element_text(size = 9),
+    axis.text = element_text(size = 8),
+    plot.title = element_text(size = 10)
+  )
+
+
+```
+
+The yellow & green points represent weeks with high case counts cluster together within lags of GDD, precipitation, and humidity.
+
+
+:::
+
+
+## Model Estimation
+
+::: {.panel-tabset}
+
+### Model 1: Mean
+
+Simple approach that takes average seasonality from training set plus a trend.
+
+Uses Box-Cox-transformed cumulative cases as dependent variable.
+
+::: {.panel-tabset}
+
+##### Iquitos
+
+```{r}
+
+fit1.iq %>% 
+  forecast(train %>% filter(year > 2001)) %>% 
+  autoplot(train %>% filter(year > 2001), level = NULL)
+
+```
+
+
+```{r}
+
+report(fit1.iq)
+
+```
+
+##### San Jose
+
+
+```{r}
+
+fit1.sj %>% 
+  forecast(train %>% filter(year > 1992)) %>% 
+  autoplot(train, level = NULL)
+
+```
+
+```{r}
+
+report(fit1.sj)
+
+```
+
+:::
+
+
+
+### Model 2: ARIMAX
+
+* Autoregressive model with exogenous variables including fourier terms.
+
+* Uses Box-Cox-transformed cumulative cases as dependent variable.
+
+::: {.panel-tabset}
+
+##### Iquitos
+
+```{r}
+
+report(fit2.iq)
+
+```
+
+##### San Jose
+
+```{r}
+
+report(fit2.sj)
+
+```
+
+:::
+
+### Model 3: Prophet with Boosted Errors
+
+* Fits a Prophet model first, then the errors are modeled using boosted trees (xgboost algorithm).
+
+* Prophet model aims to capture average seasonality and trend. 
+
+* xgboost model aims to model nonlinearity.
+
+* Uses logit-transformed case rate as dependent variable.
+
+::: {.panel-tabset}
+
+##### Iquitos
+
+```{r}
+#| fig-width: 8
+#| fig-height: 8
+
+fit3.orig.iq <- hardhat::extract_fit_engine(fit3.iq)
+
+xgboost::xgb.importance(model = fit3.orig.iq$models$model_2) %>%
+  xgboost::xgb.plot.importance(top_n = 20)
+
+```
+
+##### San Jose
+
+```{r}
+#| fig-width: 8
+#| fig-height: 8
+
+fit3.orig.sj <- hardhat::extract_fit_engine(fit3.sj)
+
+xgboost::xgb.importance(model = fit3.orig.sj$models$model_2) %>%
+  xgboost::xgb.plot.importance(top_n = 20)
+
+```
+
+:::
+
+:::
+
+## Forecast
+
+
+::: {.panel-tabset}
+
+### Validation Set
+
+* Iquitos models were trained on `r train.start.iq%--%(valid.start.iq-weeks(1))` with the validation set covering `r valid.start.iq%--%(test.start.iq-weeks(1))`.
+
+* San Jose models were trained on `r train.start.sj%--%(valid.start.sj-weeks(1))` with the validation set covering `r valid.start.sj%--%(test.start.sj-weeks(1))`.
+
+#### Iquitos
+
+```{r}
+#| fig-width: 12
+#| fig-height: 4
+
+fx_valid.iq %>% 
+  autoplot(predicted_cases) +
+  autolayer(
+    train.all %>% filter(city == "iq") %>% filter(week_start_date >= ymd(valid.start.iq) - weeks(52)), 
+    total_cases
+  ) +
+  ylab("Weekly Cases") +
+  ylab("Weekly Cases") +
+  annotate(
+    "text", x = 14700, y = 60.5,
+    label = "MAE", vjust = 0, hjust = 1
+  ) +
+  annotate(
+    "label", x = 14700, y = 60,
+    label = mae.valid %>% filter(city == "iq") %>% select(-city) %>%
+      apply(., 1, \(x){paste0(x[1], ": ", label_comma(accuracy = .01)(as.numeric(x[2])))}) %>% 
+      paste(collapse = "\n"),
+    vjust = 1, hjust = 1
+  )
+
+```
+
+#### San Jose
+
+```{r}
+#| fig-width: 12
+#| fig-height: 4
+
+fx_valid.sj %>% 
+  autoplot(predicted_cases) +
+  autolayer(
+    train.all %>% filter(city == "sj") %>% filter(week_start_date >= ymd(valid.start.sj) - weeks(52)), 
+    total_cases
+  ) +
+  ylab("Weekly Cases") +
+  annotate(
+    "text", x = 12600, y = 161,
+    label = "MAE", vjust = 0, hjust = 1
+  ) +
+  annotate(
+    "label", x = 12600, y = 160,
+    label = mae.valid %>% filter(city == "sj") %>% select(-city) %>%
+      apply(., 1, \(x){paste0(x[1], ": ", label_comma(accuracy = .01)(as.numeric(x[2])))}) %>% 
+      paste(collapse = "\n"),
+    vjust = 1, hjust = 1
+  )
+
+
+```
+
+#### Mean Absolute Error
+
+```{r}
+
+mae.valid %>% 
+  pivot_wider(names_from = city, values_from = mae) %>% 
+  mutate(
+    model_description = case_when(
+      .model == "ensemble" ~ "Simple average of other models",
+      .model == "fit1" ~ "Average seasonality plus trend",
+      .model == "fit2" ~ "ARIMAX",
+      .model == "fit3" ~ "Prophet with Boosted Trees",
+    )
+  ) %>% 
+  relocate(.model, model_description) 
+
+```
+
+> Iquitos has a lower mean absolute error than San Jose, however, this is likely a result of having an average of 7.54 weekly cases to San Jose's average of 34.1 during the training set. 
+
+> Surprisingly, the Seasonal Mean Plus Trend approach (Model 1) outperforms the ARIMAX approach (Model 2) for both cities, and the Boosted Prophet approach for San Jose. 
+
+> The Prophet with Boosted Trees performs best for Iquitos.
+
+> The best model likely is the ensemble model as it's only slightly edged out for Iquitos but significantly better for San Jose. 
+
+
+
+### Test Set
+
+* Iquitos models were trained on the full training set, `r train.start.iq%--%(test.start.iq-weeks(1))`, with the test set covering `r test.start.iq%--%(test.end.iq)`.
+
+* San Jose models were trained on the full training set, `r train.start.sj%--%(valid.start.sj-weeks(1))`, with the test set covering `r test.start.sj%--%(test.end.sj)`.
+
+
+
+```{r}
+#| fig-width: 12
+#| fig-height: 6
+
+bind_rows(
+  fx.test,
+  train.all %>% select(city, yearweek, total_cases)
+) %>% 
+  as_tibble() %>% 
+  filter(year(yearweek) >= 2007) %>% 
+  pivot_longer(c(predicted_cases, total_cases), names_to = "series", values_to = "cases") %>% 
+  filter(!is.na(cases)) %>% 
+  ggplot(aes(x = yearweek, y = cases, color = interaction(.model, series))) +
+  geom_line() +
+  facet_grid(city ~ ., scales = "free") +
+  theme(legend.position = "bottom")
+
+```
+
+
+
+:::
+
+Data was split into a training set, validation set, and the test set.
+
+:::
+
+
+
+
+```{r}
+#| echo: false
+#| eval: false
+parallel::stopCluster(cl)
+```
+
