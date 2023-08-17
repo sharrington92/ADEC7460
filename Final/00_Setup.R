@@ -66,7 +66,7 @@
     
     last_val <- the_data %>% 
       filter(city == the_city) %>% 
-      filter(yearweek < fx_start) %>% as_tibble() %>% View()
+      filter(yearweek < fx_start) %>% as_tibble() %>% 
       pull(cases_cumulative) %>% 
       last()
     
@@ -82,7 +82,7 @@
   }
   
   
-  fn_standardize_fx <- function(the_fx, the_model, the_city){
+  fn_standardize_fx <- function(the_fx, the_model, the_city, the_smooth = 1){
     
     if(the_model == 1){
       fx.tbl <- the_fx %>% 
@@ -122,35 +122,78 @@
        
     } else if(the_model == 3){
       
-
       if(the_city == "iq"){
-        the_date <- ymd(valid.start.iq) 
+        
+        the_date <- ymd(valid.start.iq)
+        
+        the_fx %>% 
+          group_by(.model_desc) %>%
+          arrange(.index) %>%
+          mutate(
+            .value = exp(.value) - 1, 
+            .value = ifelse(.key == "prediction", rollmean(.value, k = the_smooth, fill = .value, align = "center"), .value)
+          ) %>% 
+          ungroup() %>% 
+          mutate(
+            city = the_city,
+            .model = "fit3",
+            yearweek = yearweek(.index)
+          ) %>% 
+          rename(
+            predicted_cases = .value, 
+            predicted_cases_lo = .conf_lo,
+            predicted_cases_hi = .conf_hi
+          ) %>% 
+          filter(.index >= year(the_date)) %>%
+          select(city, .model, yearweek, predicted_cases, predicted_cases_lo, predicted_cases_hi) %>% 
+          mutate(
+            across(c(predicted_cases, predicted_cases_lo, predicted_cases_hi), \(x){pmax(x, 0)})
+          ) %>% 
+          tsibble(index = yearweek, key = c(city, .model)) %>% 
+          return()
+        
       } else{
+        
         the_date <- ymd(valid.start.sj)
+        
+        the_fx %>% 
+          group_by(.model_desc) %>%
+          arrange(.index) %>%
+          mutate(
+            city = the_city,
+            .model = "fit3",
+            yearweek = yearweek(.index)
+          ) %>% 
+          left_join(
+            data.all %>% select(city, yearweek, population),
+            by = c("city", "yearweek")
+          ) %>%
+          mutate(
+            across(c(.value, .conf_hi, .conf_lo), \(x){(1 / (1+exp(-(x-.00001)))) * population}),
+            # .value = (1 / (1+exp(-(.value-.00001)))) * population,
+            .value = ifelse(
+              .key == "prediction",
+              rollmean(.value, k = the_smooth, fill = .value, align = "center"),
+              .value
+            )
+          ) %>%
+          ungroup() %>% 
+          # tsibble(index = .index, key = .key) %>% filter(year(.index) > 2003) %>% autoplot(.value)
+          filter(.model_desc != "ACTUAL") %>% 
+          rename(
+            predicted_cases = .value, 
+            predicted_cases_lo = .conf_lo,
+            predicted_cases_hi = .conf_hi
+          ) %>% 
+          filter(year(.index) >= year(the_date)) %>%
+          # summarize(MAE(predicted_cases - total_cases)) %>% pull()
+          select(city, .model, yearweek, predicted_cases, predicted_cases_lo, predicted_cases_hi) %>% 
+          mutate(
+            across(c(predicted_cases, predicted_cases_lo, predicted_cases_hi), \(x){pmax(x, 0)})
+          ) %>% #duplicates(index = yearweek, key = c(city, .model))
+          tsibble(index = yearweek, key = c(city, .model)) %>% 
+          return()
       }
-      
-      the_fx %>% 
-        group_by(.model_desc) %>%
-        arrange(.index) %>%
-        mutate(.value = exp(.value) - 1) %>% 
-        ungroup() %>% 
-        mutate(
-          city = the_city,
-          .model = "fit3",
-          yearweek = yearweek(.index)
-        ) %>% 
-        rename(
-          predicted_cases = .value, 
-          predicted_cases_lo = .conf_lo,
-          predicted_cases_hi = .conf_hi
-        ) %>% 
-        filter(.index >= year(the_date)) %>%
-        select(city, .model, yearweek, predicted_cases, predicted_cases_lo, predicted_cases_hi) %>% 
-        mutate(
-          across(c(predicted_cases, predicted_cases_lo, predicted_cases_hi), \(x){pmax(x, 0)})
-        ) %>% 
-        tsibble(index = yearweek, key = c(city, .model)) %>% 
-        return()
       
     }
     
@@ -313,13 +356,13 @@
       group_by(city) %>% 
       mutate(
         case_rate = total_cases / population,
-        susc.1w = population - rollsum(total_cases, k = 1, fill = total_cases, align = "right"),
-        susc.2w = population - rollsum(total_cases, k = 2, fill = total_cases, align = "right"),
-        susc.4w = population - rollsum(total_cases, k = 4, fill = total_cases, align = "right"),
-        susc.8w = population - rollsum(total_cases, k = 8, fill = total_cases, align = "right"),
-        susc.13w = population - rollsum(total_cases, k = 13, fill = total_cases, align = "right"),
-        susc.26w = population - rollsum(total_cases, k = 26, fill = total_cases, align = "right"),
-        susc.52w = population - rollsum(total_cases, k = 52, fill = total_cases, align = "right")
+        # susc.1w = population - rollsum(total_cases, k = 1, fill = total_cases, align = "right"),
+        # susc.2w = population - rollsum(total_cases, k = 2, fill = total_cases, align = "right"),
+        # susc.4w = population - rollsum(total_cases, k = 4, fill = total_cases, align = "right"),
+        # susc.8w = population - rollsum(total_cases, k = 8, fill = total_cases, align = "right"),
+        # susc.13w = population - rollsum(total_cases, k = 13, fill = total_cases, align = "right"),
+        # susc.26w = population - rollsum(total_cases, k = 26, fill = total_cases, align = "right"),
+        # susc.52w = population - rollsum(total_cases, k = 52, fill = total_cases, align = "right")
       ) %>% 
       ungroup()
     
@@ -345,7 +388,7 @@
     
     cols <- setdiff(
       colnames(data.all.raw_with.calcs), 
-      c(vars.id, "is_missing", "total_cases_scaled", "total_cases", "is_test")
+      c(vars.id, "is_missing", "total_cases_scaled", "total_cases", "is_test", "case_rate")
     )
     
     
@@ -440,54 +483,12 @@
 }
 
 
-# Data Recipe ----
+# Save Data ----
 {
-  # data.recipe_gen <- train.all.raw %>% 
-  #   as_tibble() %>% 
-  #   recipe(total_cases ~ ., data = .) %>% 
-  #   # update_role(
-  #   #   any_of(c(setdiff(vars.y, "total_cases"))), 
-  #   #   new_role = "ID"
-  #   # ) %>%
-  #   update_role(
-  #     any_of(setdiff(vars.id, c("week_start_date", "is_missing"))),
-  #     new_role = "ID"
-  #   ) %>% 
-  #   step_mutate()
-  #   ## Missing Variables
-  #   step_impute_bag(all_numeric_predictors()) %>% 
-  #   step_imp
-  #   ## Calculated variables
-  #   
-  #   ## Deseasonalize
-  #   
-  #   ## PCA
-  #   
-  #   
-  #   timetk::step_smooth(
-  #     # all_numeric_predictors(),
-  #     period = 4,
-  #     precipitation_amt_mm, reanalysis_air_temp_k, reanalysis_avg_temp_k,
-  #     reanalysis_min_air_temp_k, reanalysis_precip_amt_kg_per_m2,
-  #     reanalysis_max_air_temp_k, reanalysis_tdtr_k, reanalysis_relative_humidity_percent
-  #   ) %>%
-  #   step_arrange() %>% 
-  #   step_lag(all_numeric_predictors(), lag = 1:10) %>% 
-  #   # update_role(total_cases, new_role = "predictor") %>%
-  #   # step_lag(total_cases, lag = 1:10, skip = T) %>%
-  #   # update_role(total_cases, new_role = "outcome") %>%
-  #   step_diff(all_numeric_predictors(), lag = 52) %>%
-  #   step_diff(all_numeric_predictors()) %>%
-  #   timetk::step_fourier(week_start_date, K = 4, period = 365/52) %>%
-  #   step_naomit(all_numeric()) %>%
-  #   step_timeseries_signature(week_start_date) %>%
-  #   step_dummy(all_nominal_predictors()) %>% 
-  #   step_corr(all_numeric_predictors(), threshold = .9) %>% 
-  #   step_nzv() %>%
-  #   update_role(week_start_date, new_role = "ID")
-  
-  
-    
+  saveRDS(train, "Report Objects/train.RDS")
+  saveRDS(train.all, "Report Objects/train.all.RDS")
+  saveRDS(valid, "Report Objects/valid.RDS")
+  saveRDS(test, "Report Objects/test.RDS")
 }
 
 
@@ -504,10 +505,12 @@
   train.start.iq <- as_tibble(train) %>% filter(city == "iq") %>% summarize(first(week_start_date)) %>% pull()
   valid.start.iq <- as_tibble(valid) %>% filter(city == "iq") %>% summarize(first(week_start_date)) %>% pull()
   test.start.iq <- as_tibble(test) %>% filter(city == "iq") %>% summarize(first(week_start_date)) %>% pull()
+  test.end.iq <- as_tibble(test) %>% filter(city == "iq") %>% summarize(last(week_start_date)) %>% pull()
   
   train.start.sj <- as_tibble(train) %>% filter(city == "sj") %>% summarize(first(week_start_date)) %>% pull()
   valid.start.sj <- as_tibble(valid) %>% filter(city == "sj") %>% summarize(first(week_start_date)) %>% pull()
   test.start.sj <- as_tibble(test) %>% filter(city == "sj") %>% summarize(first(week_start_date)) %>% pull()
+  test.end.sj <- as_tibble(test) %>% filter(city == "sj") %>% summarize(last(week_start_date)) %>% pull()
   
   years_with_bgn <- train %>% 
     filter(weekofyear==1) %>% 

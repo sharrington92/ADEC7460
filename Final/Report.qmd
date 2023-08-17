@@ -75,8 +75,16 @@ train %>%
 
 ```{r}
 
+train.all %>% 
+  autoplot(case_rate + .000001) +
+  scale_y_continuous(labels = label_percent(), trans = "logit")
+
 train %>% 
-  autoplot(case_rate)
+  autoplot(box_cox(case_rate, -.15))
+
+train %>% 
+  autoplot((total_cases + 1)/population) +
+  scale_y_continuous(labels = label_percent(), trans = "log10")
 
 ```
 
@@ -160,6 +168,8 @@ Discuss any hyperparameter tuning or model optimization steps. -->
 
 
 ```{r m1_fit_iq}
+#| eval: false
+#| echo: true
 
 fit1.iq <- train %>% 
   filter(city == "iq") %>% 
@@ -167,6 +177,27 @@ fit1.iq <- train %>%
   model(
     fit1 = TSLM(box_cox(cases_cumulative, .8) ~ fourier(K = 10) + trend())
   )
+
+```
+
+
+
+```{r m1_fit_iq_save}
+#| eval: false
+#| echo: false
+
+saveRDS(fit1.iq, "Report Objects/fit1.iq.RDS")
+
+
+```
+
+
+```{r m1_fit_iq_read}
+#| eval: true
+#| echo: false
+
+fit1.iq <- readRDS("Report Objects/fit1.iq.RDS")
+
 
 ```
 
@@ -187,6 +218,28 @@ fit1.sj <- train %>%
 
 
 ```
+
+
+
+```{r m1_fit_sj_save}
+#| eval: false
+#| echo: false
+
+saveRDS(fit1.sj, "Report Objects/fit1.sj.RDS")
+
+
+```
+
+
+```{r m1_fit_sj_read}
+#| eval: true
+#| echo: false
+
+fit1.sj <- readRDS("Report Objects/fit1.sj.RDS")
+
+
+```
+
 
 
 
@@ -448,6 +501,8 @@ collect_metrics(fit3.tuning_iq) %>%
 
 
 ```{r m3_final_iq}
+#| eval: false
+#| echo: true
 
 (best.param_iq <- select_best(fit3.tuning_iq, "rmse"))
 
@@ -461,6 +516,29 @@ fit3.iq <- wf.final_iq %>%
 
 
 
+```{r m3_fit_iq_save}
+#| eval: false
+#| echo: false
+
+saveRDS(fit3.iq, "Report Objects/fit3.iq.RDS")
+
+
+```
+
+
+```{r m3_fit_iq_read}
+#| eval: true
+#| echo: false
+
+fit3.iq <- readRDS("Report Objects/fit3.iq.RDS")
+
+
+```
+
+
+
+
+
 ####### San Jose
 
 
@@ -468,12 +546,12 @@ fit3.iq <- wf.final_iq %>%
 ```{r m3_recipe_sj}
 
 recipe_spec_sj <- train %>%
-  as_tibble() %>% 
-  recipe(total_cases ~ ., data = .) %>%
-  step_filter(city == "sj") %>% 
+  as_tibble() %>%
+  filter(city == "sj") %>% 
+  recipe(case_rate ~ ., data = .) %>%
   step_timeseries_signature(week_start_date) %>% 
   step_rm(
-    any_of(setdiff(!!vars.y, "total_cases"))
+    any_of(setdiff(!!vars.y, "case_rate"))
   ) %>%
   step_rm(
     any_of(setdiff(!!vars.id, c("weekofyear", "week_start_date")))
@@ -483,13 +561,12 @@ recipe_spec_sj <- train %>%
     contains("am.pm"), contains("hour"), contains("minute"),
     contains("second"), contains("xts"), contains("day"), contains("susc")
   ) %>% 
-  step_fourier(week_start_date, period = 52, K = 5) %>%
   step_dummy(all_nominal_predictors()) %>%
   step_lag(all_numeric_predictors(), lag = 1:10) %>%
   step_normalize(all_numeric_predictors()) %>%
   step_diff(contains("_sa")) %>% 
-  step_naomit(all_predictors(), total_cases) %>% 
-  step_log(total_cases, offset = 1)
+  step_naomit(all_predictors(), case_rate) %>% 
+  step_logit(case_rate, offset = .00001)
 
 
 ```
@@ -525,13 +602,13 @@ workflow_fit_proph_boost_sj <- workflow() %>%
 #| eval: false
 
 (tuning.grid_sj <- grid_regular(
-  mtry(c(300, 600)),
-  learn_rate(c(-1, 0)),
-  tree_depth(c(50, 90)),
-  min_n(c(5,20)),
-  # levels = c(2,2,2,2)
-  levels = c(4, 4, 4, 3)
-))
+    mtry(c(50, 150)),
+    learn_rate(c(-1, 0)),
+    tree_depth(c(20, 60)),
+    min_n(c(5,20)),
+    # levels = c(2,2,1,1)
+    levels = c(3, 4, 3, 3)
+  ))
 
 (folds_sj <- rolling_origin(
   train %>% filter(city == "sj"), 
@@ -539,7 +616,6 @@ workflow_fit_proph_boost_sj <- workflow() %>%
   initial = 52*5, assess = 100, skip = 100
 ))
 
-# Tune model
 fit3.tuning_sj <- workflow_fit_proph_boost_sj %>%
   tune_grid(folds_sj, grid = tuning.grid_sj)
 
@@ -596,15 +672,15 @@ collect_metrics(fit3.tuning_sj) %>%
   rename(RMSE = mean) %>% 
   ggplot(aes(
     x = learn_rate,
-    y = mtry, 
+    y = min_n, 
     fill = RMSE
   )) +
   geom_raster(interpolate = T) + 
   scale_x_log10() +
-  facet_grid(tree_depth ~ min_n, scales = "free_x") +
+  facet_grid(tree_depth ~ mtry, scales = "free_x") +
   scale_y_continuous(labels = label_comma()) +
   scale_fill_viridis_c(option = "B", direction = -1) +
-  ggtitle("Heat Map of Cross Validated RMSE facted by tree depth (horizontally) and min_n (vertically)") +
+  ggtitle("Heat Map of Cross Validated RMSE facted by tree depth (horizontally) and m_try (vertically)") +
   theme_bw() +
   theme(legend.position = "bottom", legend.key.width = unit(2, "cm"))
 
@@ -625,6 +701,28 @@ fit3.sj <- wf.final_sj %>%
   fit(train)
     
 ```
+
+
+
+```{r m3_fit_sj_save}
+#| eval: false
+#| echo: false
+
+saveRDS(fit3.sj, "Report Objects/fit3.sj.RDS")
+
+
+```
+
+
+```{r m3_fit_sj_read}
+#| eval: true
+#| echo: false
+
+fit3.sj <- readRDS("Report Objects/fit3.sj.RDS")
+
+
+```
+
 
 
 
@@ -680,9 +778,6 @@ fit2.iq %>%
 
 ###### Model 3
 
-
-
-
 ```{r m3_var_imp_iq}
 
 
@@ -733,7 +828,7 @@ fit2.sj %>%
 fit3.orig.sj <- extract_fit_engine(fit3.sj)
 
 xgboost::xgb.importance(model = fit3.orig.sj$models$model_2) %>%
-  xgboost::xgb.plot.importance(top_n = 10) 
+  xgboost::xgb.plot.importance(top_n = 20) 
 
 ```
 
@@ -760,7 +855,7 @@ fx3.iq_trans <- calibration_table_iq %>%
   )
 
 
-fx3.iq <- fn_standardize_fx(fx3.iq_trans, the_model = 3, the_city = "iq")
+fx3.iq <- fn_standardize_fx(fx3.iq_trans, the_model = 3, the_city = "iq", the_smooth = 7)
 
 ```
 
@@ -789,6 +884,15 @@ fx.iq <- bind_rows(fx.iq, fx.iq_avg)
 
 
 ```
+
+```{r}
+#| echo: false
+#| eval: false
+
+saveRDS(fx.iq, "Report Objects/fx_valid.iq.RDS")
+
+```
+
 
 
 ###### Comparison
@@ -830,7 +934,7 @@ fx1.sj <- fn_standardize_fx(forecast(fit1.sj, valid), the_model = 1, the_city = 
 fx2.sj <- fn_standardize_fx(forecast(fit2.sj, valid), the_model = 2, the_city = "sj")
 
 calibration_table_sj <- modeltime_table(fit3.sj) %>%
-  modeltime_calibrate(valid)
+  modeltime_calibrate(valid %>% filter(city == "sj"))
 
 fx3.sj_trans <- calibration_table_sj %>%
   modeltime_forecast(
@@ -838,7 +942,9 @@ fx3.sj_trans <- calibration_table_sj %>%
     new_data = as_tibble(valid) %>% filter(city == "sj")
   )
 
-fx3.sj <- fn_standardize_fx(fx3.sj_trans, the_model = 3, the_city = "sj")
+fx3.sj <- fn_standardize_fx(
+  fx3.sj_trans, the_model = 3, the_city = "sj", the_smooth = 10
+)
 
 ```
 
@@ -869,6 +975,14 @@ fx.sj <- bind_rows(fx.sj, fx.sj_avg)
 ```
 
 
+```{r}
+#| echo: false
+#| eval: false
+
+saveRDS(fx.sj, "Report Objects/fx_valid.sj.RDS")
+
+```
+
 ###### Comparison
 
 ```{r fx_valid_plot_sj}
@@ -897,28 +1011,28 @@ fx.sj %>%
 ```
 
 
-#### Fit Models on Full Training Set
+#### Final Fit Models on Full Training Set
 
 ```{r fit_final}
 
 fit1.iq_final <- fit1.iq %>% 
-  refit(train.all)
+  refit(train.all %>% filter(city == "iq"))
 
 fit2.iq_final <- fit2.iq %>% 
-  refit(train.all)
+  refit(train.all %>% filter(city == "iq"))
 
 fit3.iq_final <- wf.final_iq %>% 
-  fit(train.all)
+  fit(train.all %>% filter(city == "iq"))
 
 
 fit1.sj_final <- fit1.sj %>% 
-  refit(train.all)
+  refit(train.all %>% filter(city == "sj"))
 
 fit2.sj_final <- fit2.sj %>% 
-  refit(train.all)
+  refit(train.all %>% filter(city == "sj"))
 
 fit3.sj_final <- wf.final_sj %>% 
-  fit(train.all)
+  fit(train.all %>% filter(city == "sj"))
 
 ```
 
@@ -942,7 +1056,7 @@ fx3.test.iq <- modeltime_table(fit3.iq_final) %>%
   modeltime_forecast(
     new_data = as_tibble(test) %>% filter(city == "iq")
   ) %>% 
-  fn_standardize_fx(., 3, "iq")
+  fn_standardize_fx(., 3, "iq", 7)
 
 
 fx.test.iq <- bind_rows(fx1.test.iq, fx2.test.iq, fx3.test.iq)
@@ -979,7 +1093,7 @@ fx3.test.sj <- modeltime_table(fit3.sj_final) %>%
   modeltime_forecast(
     new_data = as_tibble(test) %>% filter(city == "sj")
   ) %>% 
-  fn_standardize_fx(., 3, "sj")
+  fn_standardize_fx(., 3, "sj", 7)
 
 
 fx.test.sj <- bind_rows(fx1.test.sj, fx2.test.sj, fx3.test.sj)
@@ -998,8 +1112,11 @@ fx.test.sj <- bind_rows(fx.test.sj, fx.test.sj_avg)
 
 
 ```{r fx_test_save}
-#| eval: true
+#| eval: false
 #| echo: false
+
+bind_rows(fx.test.iq, fx.test.sj) %>% 
+  saveRDS(., "Report Objects/fx_test.RDS")
 
 fx.test_list <- bind_rows(fx.test.iq, fx.test.sj) %>% 
   # left_join(y = test %>% select(city, yearweek, year, weekofyear)) %>% 
@@ -1050,7 +1167,7 @@ bind_rows(
   train.all %>% select(city, yearweek, total_cases)
 ) %>% 
   as_tibble() %>% 
-  filter(year(yearweek) >= 2004) %>% 
+  filter(year(yearweek) >= 2003) %>% 
   pivot_longer(c(predicted_cases, total_cases), names_to = "series", values_to = "cases") %>% 
   filter(!is.na(cases)) %>% 
   ggplot(aes(x = yearweek, y = cases, color = interaction(.model, series))) +
