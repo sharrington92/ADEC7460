@@ -208,7 +208,7 @@ train %>%
     c(reanalysis_relative_humidity_percent),
     \(x){rollmean(x, k = 4, fill = NA, align = "right")}
   )) %>%
-  pivot_longer(-c(any_of(c(vars.id, "days_in_week", "is_missing"))), names_to = "variable") %>% 
+  pivot_longer(-c(any_of(c(vars.id, "days_in_week", "is_missing")), contains("_cut")), names_to = "variable") %>% 
   filter(variable %in% c(
     "case_rate", 
     "hdd_reanalysis_365d",

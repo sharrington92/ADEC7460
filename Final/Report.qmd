@@ -47,9 +47,14 @@ registerDoParallel(cl)
 <!-- Brief about Dengue fever, its global and local significance. -->
 <!-- Importance of forecasting for Dengue fever cases. -->
 
+Dengue Fever is a disease transmitted by mosquitoes and affects a large portion of the developing world. Being able to accurately predict outbreaks of Dengue Fever will aid governments and non-profits to allocate resources more efficiently. 
+
 #### Objective
 
 <!-- Clearly state the aim of the paper, i.e., to forecast Dengue fever cases in the two cities using predictive analytics. -->
+
+This paper will develop models to forecast weekly Dengue Fever cases in Iquitos, Peru and San Juan, Puerto Rico. Three types of models will be estimated: an average seasonality plus trend linear model, an ARIMAX model, and a prophet model with boosted errors. Each model attempts to forecast cases from a different perspective. The average season plus trend model implicitly makes the assumption that cases are not determined by exogenous variables, they're mostly a seasonal random walk with drift. This model forecasts Box-Cox transformed cumulative cases. The ARIMAX likewise models Box-Cox transformed cumulative cases but includes an ordinary difference, thus models transformed weekly cases. Seasonality is captured in both these models with the inclusion of Fourier terms. ARIMAX also includes exogenous variables to make the prediction. It makes the assumption that cases are autocorrelated but also linearly dependent on other variables. The last model is a prophet model with boosted errors. A Prophet model is first fit to the series which captures the seasonality and trend of the series. The xgboost algorithm is then fit to the errors using exogenous variables and the hyperparameters are selected through cross validation. Where the first two models are linear, both components of this model, the Prophet and boosted trees, are nonlinear and may better model the exponential nature of Dengue Fever cases. The two linear models necessitate that the dependent variable is transformed in a way to more closely resemble linearity.
+
 
 ## Methodology
 
@@ -58,9 +63,10 @@ registerDoParallel(cl)
 <!-- Description of the dataset: sources, time period, variables, etc. -->
 <!-- Discuss any data cleaning or preprocessing steps. -->
 
-The dataset is provided by Driven Data where a training set and test set are given. The training dataset not only contains weekly Dengue Fever cases but various weather variables including precipitation, humidity, various temperatures, vegetation growth, and annual population levels for each city. Several other variables are created from these existing exogenous variables. 
+The dataset is provided by Driven Data where a training set and test set are given. The training dataset not only contains weekly Dengue Fever cases but various weather variables including precipitation, humidity, various temperatures, vegetation growth, and annual population levels for each city. Because Dengue Fever is transmitted from mosquitoes, we are essentially forecasting mosquito populations. This is used as a theoretical guide for feature engineering and modeling. Several other variables are created from these existing exogenous variables: 
 
-* Growing Degree Days (GDD): GDDs are used to approximate mosquito population growth rates as they are positively correlated. A baseline of $10$
+* Growing Degree Days (GDD): GDDs are used to approximate mosquito population growth rates as they are positively correlated. A baseline of 10$^\circ$ C is used with a cap of 45$^\circ$ C. These are used because mosquito population begin growing around 10$^\circ$ C and stop around 45$^\circ$ C. 
+* Rolling sums & averages: because weather can be volatile, rolling sums and averages are included in the models to better capture the factors that would cause mosquito populations to grow. 
 
 pmin(pmax(station_avg_temp_c - 10, 0), 34-10)
 
@@ -309,21 +315,15 @@ fit2.iq <- readRDS("Report Objects/fit2.iq.RDS")
 
 fit2.sj <- train %>% 
   filter(city == "sj") %>% 
-  filter(cases_cumulative > 10) %>% 
+  filter(cases_cumulative > 100) %>% 
   model(
-    fit2 = ARIMA(
-      box_cox(cases_cumulative, .7) ~ 1 + 
-        fourier(K = 5) + PDQ(D=0,Q=0) +
-        lag(precip_4w, n = 10) +
-        rollmean(reanalysis_tdtr_k_sa, k = 5, fill = NA, align = "right") +
-        lag(hdd_reanalysis_4w_sa * humidity_rel_avg_4w_sa, n = 6)
-      # + PC15 %>% lag(n = 6)
-      # + PC20 %>% lag(n = 1)
-      # + PC1 %>% lag(n = 1)
-      + lag(station_diur_temp_rng_c, n = 5)
-      + lag(hdd_reanalysis_365d_sa, n = 5)
-      + lag(hdd_station_365d, n = 10)
-      + lag(precip_365d_sa, n = 8)
+    fit2a = ARIMA(
+      box_cox(cases_cumulative, 1.3) ~ 1 + 
+        fourier(K = 2) + PDQ(P=0, D=0,Q=0) 
+      + lag(rollmean(reanalysis_min_air_temp_k, k = 8, NA, align = "right"), n = 8)
+      + lag(hdd_reanalysis_4w, n = 9)
+      + lag(reanalysis_tdtr_k_sa_smooth, n = 6)
+      + population
     )
   )
 
@@ -450,6 +450,11 @@ saveRDS(fit3.tuning_iq, "Report Objects/fit3.tuning_iq.RDS")
 
 fit3.tuning_iq <- readRDS("Report Objects/fit3.tuning_iq.RDS")
 
+(best.param_iq <- select_best(fit3.tuning_iq, "rmse"))
+
+wf.final_iq <- workflow_fit_proph_boost_iq %>% 
+  finalize_workflow(best.param_iq)
+
 ```
 
 
@@ -485,15 +490,27 @@ collect_metrics(fit3.tuning_iq) %>%
   rename(RMSE = mean) %>% 
   ggplot(aes(
     x = learn_rate,
-    y = mtry, 
+    y = min_n, 
     fill = RMSE
   )) +
   geom_raster(interpolate = T) + 
+  geom_point(
+    data = select_best(fit3.tuning_iq, "rmse"),
+    inherit.aes = F,
+    aes(x = learn_rate, y = min_n), 
+    shape = 3
+  ) +
+  geom_point(
+    data = select_by_one_std_err(fit3.tuning_iq, "rmse"),
+    inherit.aes = F,
+    aes(x = learn_rate, y = min_n), 
+    shape = 4
+  ) +
   scale_x_log10() +
-  facet_grid(tree_depth ~ min_n, scales = "free_x") +
+  facet_grid(tree_depth ~ mtry, scales = "free_x") +
   scale_y_continuous(labels = label_comma()) +
   scale_fill_viridis_c(option = "B", direction = -1) +
-  ggtitle("Heat Map of Cross Validated RMSE facted by tree depth (horizontally) and min_n (vertically)") +
+  ggtitle("Heat Map of Cross Validated RMSE facted by tree depth (columns) and variables used (rows)") +
   theme_bw() +
   theme(legend.position = "bottom", legend.key.width = unit(2, "cm"))
 
@@ -504,10 +521,7 @@ collect_metrics(fit3.tuning_iq) %>%
 #| eval: false
 #| echo: true
 
-(best.param_iq <- select_best(fit3.tuning_iq, "rmse"))
 
-wf.final_iq <- workflow_fit_proph_boost_iq %>% 
-  finalize_workflow(best.param_iq)
 
 fit3.iq <- wf.final_iq %>% 
   fit(train)
@@ -619,6 +633,8 @@ workflow_fit_proph_boost_sj <- workflow() %>%
 fit3.tuning_sj <- workflow_fit_proph_boost_sj %>%
   tune_grid(folds_sj, grid = tuning.grid_sj)
 
+
+
 ```
 
 ```{r m3_tuning_sj_save}
@@ -637,6 +653,11 @@ saveRDS(fit3.tuning_sj, "Report Objects/fit3.tuning_sj.RDS")
 #| echo: false
 
 fit3.tuning_sj <- readRDS("Report Objects/fit3.tuning_sj.RDS")
+
+(best.param_sj <- select_best(fit3.tuning_sj, "rmse"))
+
+wf.final_sj <- workflow_fit_proph_boost_sj %>% 
+  finalize_workflow(best.param_sj)
 
 ```
 
@@ -676,26 +697,33 @@ collect_metrics(fit3.tuning_sj) %>%
     fill = RMSE
   )) +
   geom_raster(interpolate = T) + 
+  geom_point(
+    data = select_best(fit3.tuning_sj, "rmse"),
+    inherit.aes = F,
+    aes(x = learn_rate, y = min_n), 
+    shape = 3
+  ) +
+  geom_point(
+    data = select_by_one_std_err(fit3.tuning_sj, "rmse"),
+    inherit.aes = F,
+    aes(x = learn_rate, y = min_n), 
+    shape = 4
+  ) +
   scale_x_log10() +
   facet_grid(tree_depth ~ mtry, scales = "free_x") +
   scale_y_continuous(labels = label_comma()) +
   scale_fill_viridis_c(option = "B", direction = -1) +
-  ggtitle("Heat Map of Cross Validated RMSE facted by tree depth (horizontally) and m_try (vertically)") +
+  ggtitle("Heat Map of Cross Validated RMSE facted by tree depth (columns) and variables used (rows)") +
   theme_bw() +
   theme(legend.position = "bottom", legend.key.width = unit(2, "cm"))
+
 
 ```
 
 
 ```{r m3_final_sj}
-
-
-(best.param_sj <- select_best(fit3.tuning_sj, "rmse"))
-
-
-wf.final_sj <- workflow_fit_proph_boost_sj %>% 
-  finalize_workflow(best.param_sj)
-
+#| eval: false
+#| echo: true
 
 fit3.sj <- wf.final_sj %>% 
   fit(train)
@@ -855,7 +883,7 @@ fx3.iq_trans <- calibration_table_iq %>%
   )
 
 
-fx3.iq <- fn_standardize_fx(fx3.iq_trans, the_model = 3, the_city = "iq", the_smooth = 7)
+fx3.iq <- fn_standardize_fx(fx3.iq_trans, the_model = 3, the_city = "iq", the_smooth = 5)
 
 ```
 
@@ -942,9 +970,7 @@ fx3.sj_trans <- calibration_table_sj %>%
     new_data = as_tibble(valid) %>% filter(city == "sj")
   )
 
-fx3.sj <- fn_standardize_fx(
-  fx3.sj_trans, the_model = 3, the_city = "sj", the_smooth = 10
-)
+fx3.sj <- fn_standardize_fx(fx3.sj_trans, the_model = 3, the_city = "sj", the_smooth = 3)
 
 ```
 
@@ -1042,6 +1068,7 @@ fit3.sj_final <- wf.final_sj %>%
 ##### Iquitos
 
 ```{r fx_test_iq}
+#| eval: false
 
 fx1.test.iq <- fit1.iq_final %>% 
   forecast(test) %>% 
@@ -1079,6 +1106,7 @@ fx.test.iq <- bind_rows(fx.test.iq, fx.test.iq_avg)
 
 
 ```{r fx_test_sj}
+#| eval: false
 
 fx1.test.sj <- fit1.sj_final %>% 
   forecast(test) %>% 
@@ -1158,15 +1186,24 @@ fx.test_list %>%
 
 ```
 
+```{r}
+#| eval: true
+#| echo: false
+
+fx_test <- readRDS("Report Objects/fx_test.RDS")
+
+```
+
 
 
 ```{r fx_test_plot}
 
 bind_rows(
-  fx.test.iq, fx.test.sj, 
+  fx_test, 
   train.all %>% select(city, yearweek, total_cases)
 ) %>% 
   as_tibble() %>% 
+  replace_na(list(.model = "Actual")) %>% 
   filter(year(yearweek) >= 2003) %>% 
   pivot_longer(c(predicted_cases, total_cases), names_to = "series", values_to = "cases") %>% 
   filter(!is.na(cases)) %>% 
