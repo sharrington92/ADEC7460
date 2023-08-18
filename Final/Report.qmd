@@ -1,10 +1,15 @@
 ---
 title: "Dengue Fever Forecasting"
 author: "Shaun Harrington"
-format: html
-  code-fold: true
-  fig-height: 4
-  fig-width: 8
+date: "August 18, 2023"
+format: 
+  html:
+    fig-height: 4
+    fig-width: 8
+    code-fold: true
+    toc: true
+    code-overflow: wrap
+    code-copy: true
 execute:
   warning: false
   error: false
@@ -34,26 +39,26 @@ if(!stringr::str_detect(basename(getwd()), "Time Series") & stringr::str_detect(
 source(file.path("00_Setup.R"))
 
 # 
-(all_cores <- parallel::detectCores())
-(cl <- makePSOCKcluster(all_cores))
+all_cores <- parallel::detectCores()
+cl <- makePSOCKcluster(all_cores)
 registerDoParallel(cl)
 
 ```
 
 ## Introduction
 
-#### Background
+<!-- #### Background -->
 
 <!-- Brief about Dengue fever, its global and local significance. -->
 <!-- Importance of forecasting for Dengue fever cases. -->
 
 Dengue Fever is a disease transmitted by mosquitoes and affects a large portion of the developing world. Being able to accurately predict outbreaks of Dengue Fever will aid governments and non-profits to allocate resources more efficiently. 
 
-#### Objective
+<!-- #### Objective -->
 
 <!-- Clearly state the aim of the paper, i.e., to forecast Dengue fever cases in the two cities using predictive analytics. -->
 
-This paper will develop models to forecast weekly Dengue Fever cases in Iquitos, Peru and San Juan, Puerto Rico. Three types of models will be estimated: an average seasonality plus trend linear model, an ARIMAX model, and a prophet model with boosted errors. Each model attempts to forecast cases from a different perspective. The average season plus trend model implicitly makes the assumption that cases are not determined by exogenous variables, they're mostly a seasonal random walk with drift. This model forecasts Box-Cox transformed cumulative cases. The ARIMAX likewise models Box-Cox transformed cumulative cases but includes an ordinary difference, thus models transformed weekly cases. Seasonality is captured in both these models with the inclusion of Fourier terms. ARIMAX also includes exogenous variables to make the prediction. It makes the assumption that cases are autocorrelated but also linearly dependent on other variables. The last model is a prophet model with boosted errors. A Prophet model is first fit to the series which captures the seasonality and trend of the series. The xgboost algorithm is then fit to the errors using exogenous variables and the hyperparameters are selected through cross validation. Where the first two models are linear, both components of this model, the Prophet and boosted trees, are nonlinear and may better model the exponential nature of Dengue Fever cases. The two linear models necessitate that the dependent variable is transformed in a way to more closely resemble linearity.
+This paper will develop models to forecast weekly Dengue Fever cases in Iquitos, Peru and San Juan, Puerto Rico. Three types of models will be estimated: an average seasonality plus trend linear model, an ARIMAX model, and a prophet model with boosted errors. 
 
 
 ## Methodology
@@ -65,37 +70,23 @@ This paper will develop models to forecast weekly Dengue Fever cases in Iquitos,
 
 The dataset is provided by Driven Data where a training set and test set are given. The training dataset not only contains weekly Dengue Fever cases but various weather variables including precipitation, humidity, various temperatures, vegetation growth, and annual population levels for each city. Because Dengue Fever is transmitted from mosquitoes, we are essentially forecasting mosquito populations. This is used as a theoretical guide for feature engineering and modeling. Several other variables are created from these existing exogenous variables: 
 
-* Growing Degree Days (GDD): GDDs are used to approximate mosquito population growth rates as they are positively correlated. A baseline of 10$^\circ$ C is used with a cap of 45$^\circ$ C. These are used because mosquito population begin growing around 10$^\circ$ C and stop around 45$^\circ$ C. 
+* Growing Degree Days (GDD): GDDs are used to approximate mosquito population growth rates as they are positively correlated. A baseline of 10$^\circ$C is used with a cap of 45$^\circ$C. These are used because mosquito population begin growing around 10$^\circ$C and stop around 45$^\circ$C. 
 * Rolling sums & averages: because weather can be volatile, rolling sums and averages are included in the models to better capture the factors that would cause mosquito populations to grow. 
 
-pmin(pmax(station_avg_temp_c - 10, 0), 34-10)
 
-#### Time Plots
 
-```{r}
-
-train %>% 
-  autoplot(total_cases)
-
-```
+Cases have been relatively constant over time with occasional large outbreaks. San Juan appears to be possible getting the situation under more control, but Iquitos remains more elevated.
 
 ```{r}
 
-train.all %>% 
-  autoplot(case_rate + .000001) +
-  scale_y_continuous(labels = label_percent(), trans = "logit")
-
 train %>% 
-  autoplot(box_cox(case_rate, -.15))
-
-train %>% 
-  autoplot((total_cases + 1)/population) +
-  scale_y_continuous(labels = label_percent(), trans = "log10")
+  autoplot(case_rate) +
+  scale_y_continuous("Case Rate", labels = label_percent())
 
 ```
 
 
-#### Seasonality
+Cases have a strong seasonality that peaks in the fall to early winter, except for a single San Juan outbreak that occurred in the summer. 
 
 ```{r}
 
@@ -104,8 +95,7 @@ train %>%
 
 ```
 
-
-#### Decomposition
+The log transformed decomposition demonstrates these trends and seasonality. 
 
 ```{r}
 
@@ -116,9 +106,12 @@ train %>%
 
 ```
 
-
+A complicating factor is the relation between the exogenous variables and case counts. The chart below highlights this complexity The interaction between tdtr and the minimum air temperature does not appear correlated with case counts until 4-week GDD are also accounted for. Then when it is accounted for, there are differing effects depending on how many GDDs there have been in the past 4 weeks.
 
 ```{r}
+#| eval: false
+#| echo: false
+
 
 L = 5
 train %>%
@@ -150,14 +143,40 @@ train %>%
 
 ```
 
+```{r}
+
+train.all %>% 
+  filter(cases_cumulative > 1000) %>% 
+  ggplot(aes(
+    y = log(total_cases + 1),
+    x = reanalysis_tdtr_k_sa_smooth * 
+      rollmean(reanalysis_min_air_temp_k, k = 8, NA, align = "right") *
+      rollmean(station_diur_temp_rng_c, k = 8, NA, align = "right"),
+    color = hdd_reanalysis_4w_cut
+  )) +
+  geom_point(size = 3, alpha = .35) +
+  geom_smooth(method = "lm", se = F) + 
+  facet_wrap(city ~ ., scales = "free") +
+  scale_color_viridis_d(option = "D")  +
+  theme(legend.position = "bottom")
+
+```
+
 
 
 ### Modeling
 
-#### Description of Models
+<!-- #### Description of Models -->
 
 <!-- Discuss the rationale for selecting these models. -->
 <!-- Provide a brief theoretical background for each model. -->
+
+Each of the three models attempts to forecast cases from a different perspective. The average season plus trend model implicitly makes the assumption that cases are not determined by exogenous variables, they're mostly a seasonal random walk with drift. This model forecasts Box-Cox transformed cumulative cases. 
+
+The ARIMAX likewise models Box-Cox transformed cumulative cases but includes an ordinary difference, thus models transformed weekly cases. Seasonality is captured in both these models with the inclusion of Fourier terms. ARIMAX also includes exogenous variables to make the prediction. It makes the assumption that cases are autocorrelated but also linearly dependent on other variables. 
+
+The last model is a prophet model with boosted errors. A Prophet model is first fit to the series which captures the seasonality and trend of the series. The xgboost algorithm is then fit to the errors using exogenous variables and the hyperparameters are selected through cross validation. Where the first two models are linear, both components of this model, the Prophet and boosted trees, are nonlinear and may better model the exponential nature of Dengue Fever cases. The two linear models necessitate that the dependent variable is transformed in a way to more closely resemble linearity.
+
 
 #### Modeling Training
 
@@ -166,22 +185,24 @@ train %>%
 <!-- Discuss any hyperparameter tuning or model optimization steps.
 Discuss any hyperparameter tuning or model optimization steps. -->
 
+The training set provided by Driven Data is separated into two sets: a training and validation set. Iquitos models were trained on `r train.start.iq%--%(valid.start.iq-weeks(1))` with the validation set covering `r valid.start.iq%--%(test.start.iq-weeks(1))`. San Juan models were trained on `r train.start.sj%--%(valid.start.sj-weeks(1))` with the validation set covering `r valid.start.sj%--%(test.start.sj-weeks(1))`.
 
-##### Model 1: Mean
+The validation set was used to guide the variable selection and the hyperparameter tuning.
 
-####### Iquitos
+##### Model 1: Average Seasonality Plus Trend
 
-
+To capture the average seasonality, Fourier terms were used as exogenous variables. A trend component was also included. The dependent variable is a Box-Cox tranformed Cumulative Case count, the lambda was chosen based on validation set forecast performance.
 
 ```{r m1_fit_iq}
 #| eval: false
 #| echo: true
+#| code-fold: show
 
 fit1.iq <- train %>% 
   filter(city == "iq") %>% 
   filter(cases_cumulative >= 10) %>% 
   model(
-    fit1 = TSLM(box_cox(cases_cumulative, .8) ~ fourier(K = 10) + trend())
+    fit1 = TSLM(box_cox(cases_cumulative, .8) ~ fourier(K = 5) + trend())
   )
 
 ```
@@ -209,17 +230,17 @@ fit1.iq <- readRDS("Report Objects/fit1.iq.RDS")
 
 
 
-####### San Jose 
-
-Estimation
 
 ```{r m1_fit_sj}
+#| eval: false
+#| echo: true
+#| code-fold: show
 
 fit1.sj <- train %>% 
   filter(city == "sj") %>% 
   filter(cases_cumulative >= 10) %>% 
   model(
-    fit1 = TSLM(box_cox(cases_cumulative, 2.15) ~ fourier(K = 10) + trend())
+    fit1 = TSLM(box_cox(cases_cumulative, 2.15) ~ fourier(K = 5) + trend())
   )
 
 
@@ -250,14 +271,14 @@ fit1.sj <- readRDS("Report Objects/fit1.sj.RDS")
 
 
 
-##### Model 2: SARIMAX
+##### Model 2: ARIMAX
 
-####### Iquitos
-
-
+The modeling diverges between the two cities in the ARIMAX models; variables seemed to have differing predictive power depending on the city. As such, the modeling was separated and variables were selected to increase predictive power. One method that was employed was by regressing exogenous variables on the model innovations in an OLS model to find which were statistically significant. Those that are were then included to determine if they aided the forecast on the validation set, they were removed if not.
 
 ```{r m2_fit_iq}
 #| eval: false
+#| echo: true
+#| code-fold: show
 
 fit2.iq <- train %>% 
   filter(city == "iq") %>% 
@@ -267,11 +288,7 @@ fit2.iq <- train %>%
       box_cox(cases_cumulative, .7) ~ 1 + 
         fourier(K = 5) + PDQ(D=0,Q=0) +
         lag(precip_4w, n = 10) +
-        # rollmean(reanalysis_tdtr_k_sa, k = 5, fill = NA, align = "right") +
         lag(hdd_reanalysis_4w_sa * humidity_rel_avg_4w_sa, n = 6)
-      # + PC15 %>% lag(n = 6)
-      # + PC20 %>% lag(n = 1)
-      # + PC1 %>% lag(n = 1)
       + lag(station_diur_temp_rng_c, n = 5)
       + lag(hdd_reanalysis_365d_sa, n = 5)
       + lag(hdd_station_365d, n = 10)
@@ -305,12 +322,10 @@ fit2.iq <- readRDS("Report Objects/fit2.iq.RDS")
 
 
 
-####### San Jose
-
-
-
 ```{r m2_fit_sj}
 #| eval: false
+#| echo: true
+#| code-fold: show
 
 
 fit2.sj <- train %>% 
@@ -353,12 +368,13 @@ fit2.sj <- readRDS("Report Objects/fit2.sj.RDS")
 
 ##### Model 3: Prophet with Boosted Errors
 
-####### Iquitos
+The modeltime package was used for the Prophet with boosted errors model. The reasoning in selecting this model was to hopefully capture the nonlinearity and complicated interactions with the boosted trees. 
 
+This package follows the tidymodels approach by defining recipes and workflows. The following recipe is a set of data preprocessing steps.
 
 ```{r m3_recipe_iq}
 
-recipe_spec_iq <- train %>%
+(recipe_spec_iq <- train %>%
   as_tibble() %>% 
   recipe(total_cases ~ ., data = .) %>%
   step_filter(city == "iq") %>% 
@@ -380,14 +396,15 @@ recipe_spec_iq <- train %>%
   step_normalize(all_numeric_predictors()) %>%
   step_diff(contains("_sa")) %>% 
   step_naomit(all_predictors(), total_cases) %>% 
-  step_log(total_cases, offset = 1)
+  step_log(total_cases, offset = 1))
 
 ```
 
 
 ```{r m3_recipe_view_iq}
-#| echo: false
 #| eval: false
+#| echo: true
+#| code-fold: show
 
 recipe_spec_iq %>% prep() %>% juice() %>% #select(week_start_date, contains("cases")) #%>% View()
   colnames() %>% sort()
@@ -398,7 +415,11 @@ recipe_spec_iq$var_info #%>% View()
 ```
 
 
+The model is specified and a workflow set up. 
+
 ```{r m3_spec_iq}
+#| code-fold: show
+
 
 model_spec_iq <- prophet_boost(mtry = tune(), tree_depth = tune(), learn_rate = tune(), min_n = tune()) %>%
   set_engine("prophet_xgboost", yearly.seasonality = TRUE, weekly.seasonality = TRUE) 
@@ -409,9 +430,11 @@ workflow_fit_proph_boost_iq <- workflow() %>%
 
 ```
 
+The model will take multiple values for the 'mtry', 'tree_depth', 'learn_rate', and 'min_n' parameters. A grid is set up to cross validate the data for each parameter combination. 
 
 ```{r m3_tuning_iq}
 #| eval: false
+#| code-fold: show
 
 (tuning.grid_iq <- grid_regular(
   mtry(c(200, 500)),
@@ -450,10 +473,6 @@ saveRDS(fit3.tuning_iq, "Report Objects/fit3.tuning_iq.RDS")
 
 fit3.tuning_iq <- readRDS("Report Objects/fit3.tuning_iq.RDS")
 
-(best.param_iq <- select_best(fit3.tuning_iq, "rmse"))
-
-wf.final_iq <- workflow_fit_proph_boost_iq %>% 
-  finalize_workflow(best.param_iq)
 
 ```
 
@@ -481,9 +500,10 @@ collect_metrics(fit3.tuning_iq) %>%
 
 ```
 
+The follow faceted heatmap shows the average RMSE from the tuning parameters. The cross indicates the combination of parameters that minimizes the RMSE. 
 
 ```{r m3_cv_results_raster_iq}
-#| fig-height: 6
+#| fig-height: 8
 
 collect_metrics(fit3.tuning_iq) %>% 
   filter(.metric == "rmse") %>% 
@@ -500,12 +520,12 @@ collect_metrics(fit3.tuning_iq) %>%
     aes(x = learn_rate, y = min_n), 
     shape = 3
   ) +
-  geom_point(
-    data = select_by_one_std_err(fit3.tuning_iq, "rmse"),
-    inherit.aes = F,
-    aes(x = learn_rate, y = min_n), 
-    shape = 4
-  ) +
+  # geom_point(
+  #   data = select_by_one_std_err(fit3.tuning_iq, "rmse"),
+  #   inherit.aes = F,
+  #   aes(x = learn_rate, y = min_n), 
+  #   shape = 4
+  # ) +
   scale_x_log10() +
   facet_grid(tree_depth ~ mtry, scales = "free_x") +
   scale_y_continuous(labels = label_comma()) +
@@ -516,12 +536,19 @@ collect_metrics(fit3.tuning_iq) %>%
 
 ```
 
+The parameters that minimize the RMSE are used to fit the entire training set. 
+
+```{r}
+(best.param_iq <- select_best(fit3.tuning_iq, "rmse"))
+
+wf.final_iq <- workflow_fit_proph_boost_iq %>% 
+  finalize_workflow(best.param_iq)
+
+```
 
 ```{r m3_final_iq}
 #| eval: false
 #| echo: true
-
-
 
 fit3.iq <- wf.final_iq %>% 
   fit(train)
@@ -550,14 +577,11 @@ fit3.iq <- readRDS("Report Objects/fit3.iq.RDS")
 ```
 
 
-
-
-
-####### San Jose
-
-
+The same approach is taken for San Juan. 
 
 ```{r m3_recipe_sj}
+#| code-fold: show
+
 
 recipe_spec_sj <- train %>%
   as_tibble() %>%
@@ -601,7 +625,7 @@ recipe_spec_sj$var_info #%>% View()
 
 
 ```{r m3_spec_sj}
-
+#| code-fold: show
 model_spec_sj <- prophet_boost(mtry = tune(), tree_depth = tune(), learn_rate = tune(), min_n = tune()) %>%
   set_engine("prophet_xgboost", yearly.seasonality = TRUE, weekly.seasonality = TRUE) 
 
@@ -614,6 +638,7 @@ workflow_fit_proph_boost_sj <- workflow() %>%
 
 ```{r m3_tuning_sj}
 #| eval: false
+#| code-fold: show
 
 (tuning.grid_sj <- grid_regular(
     mtry(c(50, 150)),
@@ -654,10 +679,7 @@ saveRDS(fit3.tuning_sj, "Report Objects/fit3.tuning_sj.RDS")
 
 fit3.tuning_sj <- readRDS("Report Objects/fit3.tuning_sj.RDS")
 
-(best.param_sj <- select_best(fit3.tuning_sj, "rmse"))
 
-wf.final_sj <- workflow_fit_proph_boost_sj %>% 
-  finalize_workflow(best.param_sj)
 
 ```
 
@@ -703,12 +725,12 @@ collect_metrics(fit3.tuning_sj) %>%
     aes(x = learn_rate, y = min_n), 
     shape = 3
   ) +
-  geom_point(
-    data = select_by_one_std_err(fit3.tuning_sj, "rmse"),
-    inherit.aes = F,
-    aes(x = learn_rate, y = min_n), 
-    shape = 4
-  ) +
+  # geom_point(
+  #   data = select_by_one_std_err(fit3.tuning_sj, "rmse"),
+  #   inherit.aes = F,
+  #   aes(x = learn_rate, y = min_n), 
+  #   shape = 4
+  # ) +
   scale_x_log10() +
   facet_grid(tree_depth ~ mtry, scales = "free_x") +
   scale_y_continuous(labels = label_comma()) +
@@ -718,6 +740,15 @@ collect_metrics(fit3.tuning_sj) %>%
   theme(legend.position = "bottom", legend.key.width = unit(2, "cm"))
 
 
+```
+
+
+
+```{r}
+(best.param_sj <- select_best(fit3.tuning_sj, "rmse"))
+
+wf.final_sj <- workflow_fit_proph_boost_sj %>% 
+  finalize_workflow(best.param_sj)
 ```
 
 
@@ -756,7 +787,7 @@ fit3.sj <- readRDS("Report Objects/fit3.sj.RDS")
 
 
 
-#### Model Evaluation
+<!-- #### Model Evaluation -->
 
 <!-- Metrics used to evaluate the model (e.g., MAE, RMSE, etc.). -->
 <!-- Discuss the validation process. -->
@@ -773,85 +804,80 @@ fit3.sj <- readRDS("Report Objects/fit3.sj.RDS")
 <!-- Display the forecasts of each model on the test data. -->
 <!-- Compare the performance of the models using the test data. -->
 
-#### Model Performance on Training Set
-
-##### Iquitos
+#### Training Set
 
 ###### Model 1
 
+The simple Average Seasonality + Trend model leaves a lot to be desired. Both cities remain highly autocorrelated with non-normal residuals. 
 
 ```{r}
-#| fig-height: 3
+#| fig-height: 4
 
 fit1.iq %>% 
-  gg_tsresiduals(lag_max = 100)
+  gg_tsresiduals(lag_max = 100) +
+  ggtitle("Iquitos")
+
+```
+
+
+```{r}
+#| fig-height: 4
+
+fit1.sj %>% 
+  gg_tsresiduals(lag_max = 100) +
+  ggtitle("San Juan")
 
 ```
 
 
 
 
+
+
 ###### Model 2
+
+The ARIMAX models improve the residuals tremendously, but still are far from perfect. They both appear to struggle with modeling periods of steep growth, likely due to the exponential nature of it. Some autocorrelation remains, but is still much better.
 
 
 ```{r}
 #| fig-height: 4
 
 fit2.iq %>% 
-  gg_tsresiduals(lag_max = 100)
+  gg_tsresiduals(lag_max = 100) +
+  ggtitle("Iquitos")
 
 ```
-
-
-
-###### Model 3
-
-```{r m3_var_imp_iq}
-
-
-fit3.orig.iq <- extract_fit_engine(fit3.iq)
-
-xgboost::xgb.importance(model = fit3.orig.iq$models$model_2) %>%
-  xgboost::xgb.plot.importance(top_n = 20) 
-
-```
-
-
-
-##### San Jose
-
-###### Model 1
-
-```{r}
-
-fit1.sj %>% 
-  gg_tsresiduals(lag_max = 100)
-
-```
-
-
-
-
-###### Model 2
 
 
 ```{r}
 
 fit2.sj %>% 
-  gg_tsresiduals(lag_max = 100)
+  gg_tsresiduals(lag_max = 100) +
+  ggtitle("San Juan")
 
 ```
 
 
 
 
-
 ###### Model 3
+
+Another advantage of the xgboost algorithm is the ability to view a variable importance plot. While it doesn't indicate how a variable is correlated with cases, it does indicate which variables have some correlation, linear or nonlinear. Both models found differing lags of GDD, precipitation, and humidity to be important variables. 
+
+```{r m3_var_imp_iq}
+#| fig-height: 6
+
+fit3.orig.iq <- extract_fit_engine(fit3.iq)
+
+xgboost::xgb.importance(model = fit3.orig.iq$models$model_2) %>%
+  xgboost::xgb.plot.importance(top_n = 20)
+
+```
 
 
 
 ```{r m3_var_imp_sj}
-
+#| fig-height: 6
 
 fit3.orig.sj <- extract_fit_engine(fit3.sj)
 
@@ -865,8 +891,8 @@ xgboost::xgb.importance(model = fit3.orig.sj$models$model_2) %>%
 
 #### Model Performance on Validation Set
 
-##### Iquitos
 
+Each of the models will forecast the validation set to compare their predictive power.
 
 ```{r fx_valid_iq}
 
@@ -888,12 +914,29 @@ fx3.iq <- fn_standardize_fx(fx3.iq_trans, the_model = 3, the_city = "iq", the_sm
 ```
 
 
+```{r fx_valid_sj}
 
-###### Ensemble
+fx1.sj <- fn_standardize_fx(forecast(fit1.sj, valid), the_model = 1, the_city = "sj")
+fx2.sj <- fn_standardize_fx(forecast(fit2.sj, valid), the_model = 2, the_city = "sj")
+
+calibration_table_sj <- modeltime_table(fit3.sj) %>%
+  modeltime_calibrate(valid %>% filter(city == "sj"))
+
+fx3.sj_trans <- calibration_table_sj %>%
+  modeltime_forecast(
+    # new_data = as_tibble(train.all) %>% filter(city == "sj", year >= year(ymd(valid.start.sj)))
+    new_data = as_tibble(valid) %>% filter(city == "sj")
+  )
+
+fx3.sj <- fn_standardize_fx(fx3.sj_trans, the_model = 3, the_city = "sj", the_smooth = 5)
+
+```
+
+An ensemble forecast will also be calculated as the simple average of the three models. This could prove to be a reliable forecast, especially since each of the three models approach the forecast quite differently. 
 
 
-```{r fx_valid_avg_iq}
-
+```{r fx_valid_avg}
+#iq 
 fx.iq <- bind_rows(
   fx1.iq,
   fx2.iq,
@@ -910,77 +953,7 @@ fx.iq_avg <- fx.iq %>%
 
 fx.iq <- bind_rows(fx.iq, fx.iq_avg)
 
-
-```
-
-```{r}
-#| echo: false
-#| eval: false
-
-saveRDS(fx.iq, "Report Objects/fx_valid.iq.RDS")
-
-```
-
-
-
-###### Comparison
-
-```{r fx_valid_plot_iq}
-
-fx.iq %>% 
-  autoplot(predicted_cases) + 
-  autolayer(
-    valid %>% filter(city == "iq"), 
-    total_cases
-  )
-
-```
-
-
-```{r fx_valid_mae_iq}
-
-(valid.mae_iq <- fx.iq %>% 
-  left_join(y = valid %>% select(city, yearweek, total_cases)) %>% 
-  as_tibble() %>% 
-  group_by(.model) %>% 
-  summarize(
-    MAE = MAE(predicted_cases - total_cases)
-  ))
-
-
-```
-
-
-
-##### San Jose
-
-
-
-```{r fx_valid_sj}
-
-fx1.sj <- fn_standardize_fx(forecast(fit1.sj, valid), the_model = 1, the_city = "sj")
-fx2.sj <- fn_standardize_fx(forecast(fit2.sj, valid), the_model = 2, the_city = "sj")
-
-calibration_table_sj <- modeltime_table(fit3.sj) %>%
-  modeltime_calibrate(valid %>% filter(city == "sj"))
-
-fx3.sj_trans <- calibration_table_sj %>%
-  modeltime_forecast(
-    # new_data = as_tibble(train.all) %>% filter(city == "sj", year >= year(ymd(valid.start.sj)))
-    new_data = as_tibble(valid) %>% filter(city == "sj")
-  )
-
-fx3.sj <- fn_standardize_fx(fx3.sj_trans, the_model = 3, the_city = "sj", the_smooth = 3)
-
-```
-
-
-
-###### Ensemble
-
-
-```{r fx_valid_avg_sj}
-
+# sj
 fx.sj <- bind_rows(
   fx1.sj,
   fx2.sj,
@@ -1000,44 +973,104 @@ fx.sj <- bind_rows(fx.sj, fx.sj_avg)
 
 ```
 
-
-```{r}
+```{r fx_valid_save}
 #| echo: false
 #| eval: false
 
+saveRDS(fx.iq, "Report Objects/fx_valid.iq.RDS")
 saveRDS(fx.sj, "Report Objects/fx_valid.sj.RDS")
 
 ```
 
-###### Comparison
+
+
+##### Comparison
+
+Iquitos has a lower mean absolute error than San Juan, however, this is likely a result of having an average of 7.54 weekly cases to San Juan's average of 34.1 during the training set. Surprisingly, the Seasonal Mean Plus Trend approach (Model 1) outperforms the ARIMAX approach (Model 2) for Iquitos. The best model likely is the ensemble model as it's only slightly edged out for both cities.
+
+```{r fx_valid_plot_iq}
+
+
+mae.valid <- bind_rows(fx.iq, fx.sj) %>% 
+  left_join(y = train.all %>% select(city, yearweek, total_cases)) %>% 
+  as_tibble() %>% 
+  group_by(city, .model) %>% 
+  summarize(mae = MAE(predicted_cases - total_cases)) %>% 
+  ungroup()
+
+
+fx.iq %>% 
+  autoplot(predicted_cases) +
+  autolayer(
+    train.all %>% filter(city == "iq") %>% filter(week_start_date >= ymd(valid.start.iq) - weeks(52)), 
+    total_cases
+  ) +
+  ylab("Weekly Cases") +
+  ylab("Weekly Cases") +
+  annotate(
+    "text", x = 14700, y = 60.5,
+    label = "MAE", vjust = 0, hjust = 1
+  ) +
+  annotate(
+    "label", x = 14700, y = 60,
+    label = mae.valid %>% filter(city == "iq") %>% select(-city) %>%
+      apply(., 1, \(x){paste0(x[1], ": ", label_comma(accuracy = .01)(as.numeric(x[2])))}) %>% 
+      paste(collapse = "\n"),
+    vjust = 1, hjust = 1
+  ) +
+  ggtitle("Validation Set Forecast: Iquitos")
+
+```
+
+
 
 ```{r fx_valid_plot_sj}
 
 fx.sj %>% 
-  autoplot(predicted_cases) + 
+  autoplot(predicted_cases) +
   autolayer(
-    valid %>% filter(city == "sj"), 
+    train.all %>% filter(city == "sj") %>% filter(week_start_date >= ymd(valid.start.sj) - weeks(52)), 
     total_cases
-  )
+  ) +
+  ylab("Weekly Cases") +
+  annotate(
+    "text", x = 12600, y = 161,
+    label = "MAE", vjust = 0, hjust = 1
+  ) +
+  annotate(
+    "label", x = 12600, y = 160,
+    label = mae.valid %>% filter(city == "sj") %>% select(-city) %>%
+      apply(., 1, \(x){paste0(x[1], ": ", label_comma(accuracy = .01)(as.numeric(x[2])))}) %>% 
+      paste(collapse = "\n"),
+    vjust = 1, hjust = 1
+  ) +
+  ggtitle("Validation Set Forecast: San Juan")
 
 ```
 
 
 ```{r fx_valid_mae_sj}
 
-(valid.mae_sj <- fx.sj %>% 
-  left_join(y = valid %>% select(city, yearweek, total_cases) %>% filter(city == "sj")) %>% 
-  as_tibble() %>% 
-  group_by(.model) %>% 
-  summarize(
-    MAE = MAE(predicted_cases - total_cases)
-  ))
+mae.valid %>% 
+  mutate(.model = ifelse(.model == "fit2a", "fit2", .model)) %>% 
+  pivot_wider(names_from = city, values_from = mae) %>% 
+  mutate(
+    model_description = case_when(
+      .model == "ensemble" ~ "Simple average of other models",
+      .model == "fit1" ~ "Average seasonality plus trend",
+      .model == "fit2" ~ "ARIMAX",
+      .model == "fit3" ~ "Prophet with Boosted Trees",
+    )
+  ) %>% 
+  relocate(.model, model_description) 
 
 
 ```
 
 
-#### Final Fit Models on Full Training Set
+#### Final Fit 
+
+All models are then refit over the entire pre-test set data, both training and validation sets, before making their final predictions.
 
 ```{r fit_final}
 
@@ -1063,9 +1096,6 @@ fit3.sj_final <- wf.final_sj %>%
 ```
 
 #### Forecast on Test Set
-
-
-##### Iquitos
 
 ```{r fx_test_iq}
 #| eval: false
@@ -1101,8 +1131,6 @@ fx.test.iq <- bind_rows(fx.test.iq, fx.test.iq_avg)
 
 ```
 
-
-##### San Jose
 
 
 ```{r fx_test_sj}
@@ -1143,10 +1171,11 @@ fx.test.sj <- bind_rows(fx.test.sj, fx.test.sj_avg)
 #| eval: false
 #| echo: false
 
-bind_rows(fx.test.iq, fx.test.sj) %>% 
+fx_test <- bind_rows(fx.test.iq, fx.test.sj) 
+fx_test %>%
   saveRDS(., "Report Objects/fx_test.RDS")
 
-fx.test_list <- bind_rows(fx.test.iq, fx.test.sj) %>% 
+fx.test_list <- fx_test %>% 
   # left_join(y = test %>% select(city, yearweek, year, weekofyear)) %>% 
   mutate(
     year = year(yearweek),
@@ -1159,7 +1188,7 @@ fx.test_list <- bind_rows(fx.test.iq, fx.test.sj) %>%
   select(.model, city, yearweek, year, weekofyear, total_cases) %>%
   split(~.model) 
 
-x <- fx.test_list[[1]]
+# x <- fx.test_list[[1]]
 fx.test_list %>%
   lapply(., \(x){
     the_model <- x$.model[1]
@@ -1186,17 +1215,20 @@ fx.test_list %>%
 
 ```
 
-```{r}
+```{r fx_test_read}
 #| eval: true
 #| echo: false
 
-fx_test <- readRDS("Report Objects/fx_test.RDS")
+fx_test <- readRDS("Report Objects/fx_test.RDS") %>% 
+  mutate(.model = ifelse(.model == "fit2a", "fit2", .model))
 
 ```
 
 
 
 ```{r fx_test_plot}
+#| fig-height: 6
+
 
 bind_rows(
   fx_test, 
@@ -1204,7 +1236,7 @@ bind_rows(
 ) %>% 
   as_tibble() %>% 
   replace_na(list(.model = "Actual")) %>% 
-  filter(year(yearweek) >= 2003) %>% 
+  filter(year(yearweek) >= 2006) %>% 
   pivot_longer(c(predicted_cases, total_cases), names_to = "series", values_to = "cases") %>% 
   filter(!is.na(cases)) %>% 
   ggplot(aes(x = yearweek, y = cases, color = interaction(.model, series))) +
@@ -1213,7 +1245,7 @@ bind_rows(
 
 ```
 
-## Discussion
+## Conclusion
 
 <!-- Model Comparisons: Discuss the strengths and weaknesses of each model in the context of the study. -->
 
@@ -1225,8 +1257,12 @@ bind_rows(
 
 <!-- Future Work: Suggestions for further research or improvement in the forecasting models. -->
 
+The models struggled to truly capture the peaks on the validation set, though they appeared to capture the far-less-volatile shoulder months. The likely culprit is using linear models on exponential data without sufficiently transforming it. The boosted Prophet model was the only one able to semi-accurately predict a peak in validation and predicts varying peaks in the test set. More fine-tuning and tweaking of the linear models will improve the ensemble even more and that should likely be the forecast most relied on. Another model that should be considered is a generalized linear model of the negative binomial family which should be better fit to handle exponentially rising cases. 
 
-## Conclusion
+The biggest limitation on these models is that they are location-specific. Different variables and parameters were used for each city making it difficult to generalize these to other locations. While a generalized approach could mean the same data could be used to make predictions elsewhere, we are constrained to only the methodology: new models must be estimated on that locations' data to forecast. 
+
+
+<!-- ## Conclusion -->
 
 <!-- Summary of Key Findings -->
 
