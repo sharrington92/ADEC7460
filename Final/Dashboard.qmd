@@ -80,10 +80,13 @@ valid.start.sj <- as_tibble(valid) %>% filter(city == "sj") %>% summarize(first(
 test.start.sj <- as_tibble(test) %>% filter(city == "sj") %>% summarize(first(week_start_date)) %>% pull()
 test.end.sj <- as_tibble(test) %>% filter(city == "sj") %>% summarize(last(week_start_date)) %>% pull()
 
-fx_valid.iq <- readRDS("Report Objects/fx_valid.iq.RDS")
-fx_valid.sj <- readRDS("Report Objects/fx_valid.sj.RDS")
+fx_valid.iq <- readRDS("Report Objects/fx_valid.iq.RDS") %>% 
+  mutate(.model = ifelse(.model == "fit2a", "fit2", .model))
+fx_valid.sj <- readRDS("Report Objects/fx_valid.sj.RDS") %>% 
+  mutate(.model = ifelse(.model == "fit2a", "fit2", .model))
 
-fx.test <- readRDS("Report Objects/fx_test.RDS")
+fx.test <- readRDS("Report Objects/fx_test.RDS") %>% 
+  mutate(.model = ifelse(.model == "fit2a", "fit2", .model))
 
 
 mae.valid <- bind_rows(fx_valid.iq, fx_valid.sj) %>% 
@@ -121,7 +124,7 @@ train %>%
 
 ### Case Rate
 
-Using the case rate ($\frac{Total Cases}{Population}) makes the two series comparable between cities but the exponential nature is still present.
+Using the case rate ($\frac{Total Cases}{Population}$) makes the two series comparable between cities but the exponential nature is still present.
 
 ```{r ts_plot_caserate}
 #| fig-width: 12
@@ -315,7 +318,7 @@ report(fit1.iq)
 
 ```
 
-##### San Jose
+##### San Juan
 
 
 ```{r}
@@ -352,7 +355,7 @@ report(fit2.iq)
 
 ```
 
-##### San Jose
+##### San Juan
 
 ```{r}
 
@@ -387,7 +390,7 @@ xgboost::xgb.importance(model = fit3.orig.iq$models$model_2) %>%
 
 ```
 
-##### San Jose
+##### San Juan
 
 ```{r}
 #| fig-width: 8
@@ -413,7 +416,7 @@ xgboost::xgb.importance(model = fit3.orig.sj$models$model_2) %>%
 
 * Iquitos models were trained on `r train.start.iq%--%(valid.start.iq-weeks(1))` with the validation set covering `r valid.start.iq%--%(test.start.iq-weeks(1))`.
 
-* San Jose models were trained on `r train.start.sj%--%(valid.start.sj-weeks(1))` with the validation set covering `r valid.start.sj%--%(test.start.sj-weeks(1))`.
+* San Juan models were trained on `r train.start.sj%--%(valid.start.sj-weeks(1))` with the validation set covering `r valid.start.sj%--%(test.start.sj-weeks(1))`.
 
 #### Iquitos
 
@@ -443,7 +446,7 @@ fx_valid.iq %>%
 
 ```
 
-#### San Jose
+#### San Juan
 
 ```{r}
 #| fig-width: 12
@@ -489,13 +492,13 @@ mae.valid %>%
 
 ```
 
-> Iquitos has a lower mean absolute error than San Jose, however, this is likely a result of having an average of 7.54 weekly cases to San Jose's average of 34.1 during the training set. 
+> Iquitos has a lower mean absolute error than San Juan, however, this is likely a result of having an average of 7.54 weekly cases to San Juan's average of 34.1 during the training set. 
 
-> Surprisingly, the Seasonal Mean Plus Trend approach (Model 1) outperforms the ARIMAX approach (Model 2) for both cities, and the Boosted Prophet approach for San Jose. 
+> Surprisingly, the Seasonal Mean Plus Trend approach (Model 1) outperforms the ARIMAX approach (Model 2) for both cities, and the Boosted Prophet approach for San Juan. 
 
 > The Prophet with Boosted Trees performs best for Iquitos.
 
-> The best model likely is the ensemble model as it's only slightly edged out for Iquitos but significantly better for San Jose. 
+> The best model likely is the ensemble model as it's only slightly edged out for Iquitos but significantly better for San Juan. 
 
 
 
@@ -503,7 +506,7 @@ mae.valid %>%
 
 * Iquitos models were trained on the full training set, `r train.start.iq%--%(test.start.iq-weeks(1))`, with the test set covering `r test.start.iq%--%(test.end.iq)`.
 
-* San Jose models were trained on the full training set, `r train.start.sj%--%(valid.start.sj-weeks(1))`, with the test set covering `r test.start.sj%--%(test.end.sj)`.
+* San Juan models were trained on the full training set, `r train.start.sj%--%(valid.start.sj-weeks(1))`, with the test set covering `r test.start.sj%--%(test.end.sj)`.
 
 
 

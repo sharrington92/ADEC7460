@@ -394,7 +394,7 @@
     
     data.all.sa <- cols[!str_detect(cols, "cases")] %>% 
       lapply(., \(x){
-        print(x)
+        # print(x)
         fn_deseasonalize(data.all.raw_with.calcs, !!x)
       }) %>% 
       reduce(., \(x, y){inner_join(x, y, by = c("yearweek", "city"))})
