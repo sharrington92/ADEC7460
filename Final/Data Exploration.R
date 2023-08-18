@@ -365,3 +365,110 @@
 }
 
 
+
+
+{
+  train.all %>% 
+    filter(city == "sj") %>% 
+    # filter(year >= 2000) %>% 
+    mutate(
+      # humidity_365d = rollmean(reanalysis_relative_humidity_percent, 52, NA, align = "right"),
+      reanalysis_tdtr_k_sa_smooth = rollmean(reanalysis_tdtr_k_sa, 26, NA, align = "right") %>% 
+        rollmax(., k = 15, NA, align = "right"),
+      testvar1 = rollmean(difference(reanalysis_tdtr_k, 52), 26, NA, align = "right"),
+      testvar2 = difference(reanalysis_tdtr_k_sa_smooth) %>% 
+        rollsum(., k = 52, NA, align = "right"),
+      # lag(n = 1)
+      # difference(lag = 52)
+      total_cases_inertia = (log((total_cases + 1) / (lag(total_cases, n = 1) + 1))) %>%
+        rollsum(k = 8, NA, align = "right"),
+      case_rate = log(case_rate + .0000001)
+      # 
+      # across(
+      #   c(reanalysis_tdtr_k_sa),
+      #   \(x){rollmean(x, 13, NA, align = "right")
+      #     # rollmax(x, 52, NA, align = "right")
+      #   }
+      # )
+    ) %>%
+    select(
+      total_cases, total_cases_inertia,
+      yearweek, case_rate, #reanalysis_tdtr_k_sa,
+      reanalysis_tdtr_k_sa_smooth,
+      # reanalysis_relative_humidity_percent_cut, hdd_reanalysis_365d_cut,
+      # reanalysis_tdtr_k_cut,
+      # reanalysis_tdtr_k_cut,
+      
+      # humidity_365d, precip_365d, hdd_reanalysis_365d, humidity_rel_avg_4w, humidity_rel_avg_2w,
+      # hdd_reanalysis_4w_sa, hdd_reanalysis_4w,
+      # hdd_reanalysis_365d, 
+      # testvar2, testvar1
+      
+      # reanalysis_dew_point_temp_k, reanalysis_air_temp_k, reanalysis_avg_temp_k, reanalysis_max_air_temp_k
+      # reanalysis_min_air_temp_k, reanalysis_precip_amt_kg_per_m2, reanalysis_sat_precip_amt_mm, reanalysis_tdtr_k
+      # station_diur_temp_rng_c_sa, ndvi_se, ndvi_nw, ndvi_ne, ndvi_sw
+    ) %>% 
+    # mutate(across(-c(yearweek, total_cases), \(x){lag(x, n = 5)})) %>% 
+    drop_na() %>% 
+    pivot_longer(-c(yearweek)) %>% 
+    ggplot(aes(y = value, x = yearweek, color = name)) +
+    geom_line() +
+    facet_grid(name ~ ., scales = "free") +
+    theme(legend.position = "none")
+  
+}
+
+
+
+
+{
+  train.all %>% 
+    filter(city == "sj") %>% 
+    filter(year >= 2000) %>% 
+    mutate(
+      humidity_365d = rollmean(reanalysis_relative_humidity_percent, 52, NA, align = "right"),
+      # total_cases = log((total_cases + 1) / (lag(total_cases, n = 1) + 1)),
+      total_cases_inertia = (log((total_cases + 1) / (lag(total_cases, n = 1) + 1))) %>%
+        rollsum(k = 52, NA, align = "right"),
+      # across(
+      #   c(station_diur_temp_rng_c_sa, ndvi_se, ndvi_nw, ndvi_ne, ndvi_sw),
+      #   \(x){
+      #     rollmean(x, 5, NA, align = "right")
+      #     # rollmax(x, 52, NA, align = "right")
+      #   }
+      # )
+    ) %>% 
+    select(
+      yearweek, total_cases, total_cases_inertia, contains("_cut"),
+      reanalysis_relative_humidity_percent_cut, hdd_reanalysis_365d_cut,
+      reanalysis_tdtr_k_cut, station_diur_temp_rng_c,
+      reanalysis_tdtr_k_sa_smooth, hdd_reanalysis_4w, reanalysis_min_air_temp_k_cut,
+      reanalysis_min_air_temp_k
+      # humidity_365d, precip_365d, hdd_reanalysis_365d, humidity_rel_avg_4w, humidity_rel_avg_2w,
+      
+      # reanalysis_dew_point_temp_k, reanalysis_air_temp_k, reanalysis_avg_temp_k, reanalysis_max_air_temp_k
+      # reanalysis_min_air_temp_k, reanalysis_precip_amt_kg_per_m2, reanalysis_sat_precip_amt_mm, reanalysis_tdtr_k
+      # station_diur_temp_rng_c_sa, ndvi_se, ndvi_nw, ndvi_ne, ndvi_sw
+    ) %>% 
+    mutate(across(-c(yearweek, total_cases, total_cases_inertia, reanalysis_tdtr_k_sa_smooth), \(x){lag(x, n = 8)})) %>%
+    drop_na() %>% 
+    # pivot_longer(-c(yearweek, total_cases_inertia, total_cases, contains("cut"))) %>% 
+    ggplot(aes(
+      # y = total_cases_inertia,
+      y = log(total_cases + 1),
+      # x = (reanalysis_tdtr_k_sa_smooth * station_diur_temp_rng_c), 
+      x = reanalysis_tdtr_k_sa_smooth * rollmean(reanalysis_min_air_temp_k, k = 8, NA, align = "right")
+      * rollmean(station_diur_temp_rng_c, k = 8, NA, align = "right"),
+      color = hdd_reanalysis_4w_cut,
+      # color = reanalysis_min_air_temp_k_cut
+      # group = hdd_reanalysis_4w_cut
+    )) +
+    geom_point(size = 3) +
+    geom_smooth(method = "lm", se = F) + #, color = "gray30"
+    # facet_grid(hdd_reanalysis_365d_cut ~ name, scales = "free") +
+    scale_color_viridis_d(option = "D") #+
+  theme(legend.position = "none")
+  
+}
+
+colnames(train)
