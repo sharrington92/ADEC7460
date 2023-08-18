@@ -103,7 +103,7 @@
         return()
       
     } else if(the_model == 2){
-     
+      
       fx.tbl <- the_fx %>% 
         select(city, .model, yearweek, cases_cumulative, .mean) %>% 
         hilo(95) %>% 
@@ -119,7 +119,7 @@
       fx.tbl %>% 
         select(-contains("cum"), -`95%`, -.mean) %>% 
         return()
-       
+      
     } else if(the_model == 3){
       
       if(the_city == "iq"){
@@ -335,7 +335,7 @@
             mutate(city = "iq"),
           other.data.list$San_Juan_Population_Data.csv %>% 
             mutate(city = "sj")
-         ) %>% 
+        ) %>% 
           mutate(
             week_start_date = paste(Year, 1, 1, sep = "-") %>%
               ymd %>%
@@ -444,7 +444,7 @@
   }
   
   
-  # Ready training & valid datasets
+  # Ready training & valid datasets ----
   {
     data.all <- data.all.raw_with.calcs %>% 
       left_join(
@@ -456,7 +456,21 @@
         y = data.all.pca %>% 
           select(yearweek, city, contains("PC")),
         by = c("yearweek", "city")
+      ) %>%
+      mutate(
+        across(
+          contains("PC"), .names = "{.col}_365d", 
+          \(x){rollmean(x, k = 52, fill = NA, align = "right")}
+        ),
+        reanalysis_tdtr_k_sa_smooth = rollmean(reanalysis_tdtr_k_sa, 26, NA, align = "right") %>% 
+          rollmax(., k = 15, NA, align = "right"),
+        across(
+          c(contains("reanalysis"), -contains("_sa"), reanalysis_tdtr_k_sa_smooth), 
+          .names = "{.col}_cut", 
+          \(x){cut_interval(x, n = 10)}
+        )
       )
+    
     
     test <- data.all %>% 
       filter(is_test == 1) %>% 
@@ -500,6 +514,7 @@
   vars.x.pc <- vars.x[str_detect(vars.x, "PC")]
   vars.x.sa <- vars.x[str_detect(vars.x, "_sa")]
   vars.x.roll <- vars.x[str_detect(vars.x, "_[0-9]+[wd]_")]
+  vars.x.cut <- vars.x[str_detect(vars.x, "_cut")]
   
   
   train.start.iq <- as_tibble(train) %>% filter(city == "iq") %>% summarize(first(week_start_date)) %>% pull()
