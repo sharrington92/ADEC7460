@@ -2,6 +2,7 @@
 title: "Dengue Fever Forecasting"
 author: "Shaun Harrington"
 date: "August 18, 2023"
+abstract: "This paper outlines the approach taken for [DengAI: Predicting Disease Spread](https://www.drivendata.org/competitions/44/dengai-predicting-disease-spread/submissions/) hosted by Driven Data. Three models are evaluated, a linear model, an ARIMAX model, and a Prophet model with boosted errors. An ensemble model is also calculated as a simple average of the models. The Boosted Prophet model appears to be the model most capable of adequately modeling the outbreaks however the ensemble model creates a better prediction on average. The Data Driven prediction submissions can be found under the user [shaun17](https://www.drivendata.org/users/shaun17/) where the best Mean Absolute Error scored was 22.762."
 format: 
   html:
     fig-height: 4
@@ -10,12 +11,22 @@ format:
     toc: true
     code-overflow: wrap
     code-copy: true
+    code-tools: true
+    self-contained: true
+    embed-resources: true
+  pdf:
+    fig-height: 4
+    fig-width: 8
 execute:
   warning: false
   error: false
 editor_options: 
   chunk_output_type: console
+bibliography: ["references.bib", "packages.bib"]
+nocite: '@*'
+biblio-style: "apalike"
 ---
+
 
 ```{r setup}
 #|eval: true
@@ -70,7 +81,7 @@ This paper will develop models to forecast weekly Dengue Fever cases in Iquitos,
 
 The dataset is provided by Driven Data where a training set and test set are given. The training dataset not only contains weekly Dengue Fever cases but various weather variables including precipitation, humidity, various temperatures, vegetation growth, and annual population levels for each city. Because Dengue Fever is transmitted from mosquitoes, we are essentially forecasting mosquito populations. This is used as a theoretical guide for feature engineering and modeling. Several other variables are created from these existing exogenous variables: 
 
-* Growing Degree Days (GDD): GDDs are used to approximate mosquito population growth rates as they are positively correlated. A baseline of 10$^\circ$C is used with a cap of 45$^\circ$C. These are used because mosquito population begin growing around 10$^\circ$C and stop around 45$^\circ$C. 
+* Growing Degree Days (GDD): GDDs are used to approximate mosquito population growth rates as they are positively correlated. A baseline of 10$^\circ$C is used with a cap of 45$^\circ$C. These are used because mosquito population begin growing around 10$^\circ$C and stop around 45$^\circ$C (@nrcc). 
 * Rolling sums & averages: because weather can be volatile, rolling sums and averages are included in the models to better capture the factors that would cause mosquito populations to grow. 
 
 
@@ -175,7 +186,7 @@ Each of the three models attempts to forecast cases from a different perspective
 
 The ARIMAX likewise models Box-Cox transformed cumulative cases but includes an ordinary difference, thus models transformed weekly cases. Seasonality is captured in both these models with the inclusion of Fourier terms. ARIMAX also includes exogenous variables to make the prediction. It makes the assumption that cases are autocorrelated but also linearly dependent on other variables. 
 
-The last model is a prophet model with boosted errors. A Prophet model is first fit to the series which captures the seasonality and trend of the series. The xgboost algorithm is then fit to the errors using exogenous variables and the hyperparameters are selected through cross validation. Where the first two models are linear, both components of this model, the Prophet and boosted trees, are nonlinear and may better model the exponential nature of Dengue Fever cases. The two linear models necessitate that the dependent variable is transformed in a way to more closely resemble linearity.
+The last model is a prophet model with boosted errors. A Prophet model is first fit to the series which captures the seasonality and trend of the series. The xgboost algorithm is then fit to the errors using exogenous variables and the hyperparameters are selected through cross validation. Where the first two models are linear, both components of this model, the Prophet and boosted trees, are nonlinear and may better model the exponential nature of Dengue Fever cases. The two linear models necessitate that the dependent variable is transformed in a way to more closely resemble linearity. @ref_fx found that machine learning models have better predictions than linear models when no exogenous variables are considered, but all performed about equally when exogenous weather variables are used.
 
 
 #### Modeling Training
@@ -202,7 +213,7 @@ fit1.iq <- train %>%
   filter(city == "iq") %>% 
   filter(cases_cumulative >= 10) %>% 
   model(
-    fit1 = TSLM(box_cox(cases_cumulative, .8) ~ fourier(K = 5) + trend())
+    fit1 = TSLM(box_cox(cases_cumulative, .8) ~ fourier(K = 1) + trend())
   )
 
 ```
@@ -240,7 +251,7 @@ fit1.sj <- train %>%
   filter(city == "sj") %>% 
   filter(cases_cumulative >= 10) %>% 
   model(
-    fit1 = TSLM(box_cox(cases_cumulative, 2.15) ~ fourier(K = 5) + trend())
+    fit1 = TSLM(box_cox(cases_cumulative, 2.15) ~ fourier(K = 1) + trend())
   )
 
 
@@ -583,7 +594,7 @@ The same approach is taken for San Juan.
 #| code-fold: show
 
 
-recipe_spec_sj <- train %>%
+(recipe_spec_sj <- train %>%
   as_tibble() %>%
   filter(city == "sj") %>% 
   recipe(case_rate ~ ., data = .) %>%
@@ -604,7 +615,7 @@ recipe_spec_sj <- train %>%
   step_normalize(all_numeric_predictors()) %>%
   step_diff(contains("_sa")) %>% 
   step_naomit(all_predictors(), case_rate) %>% 
-  step_logit(case_rate, offset = .00001)
+  step_logit(case_rate, offset = .00001))
 
 
 ```
@@ -866,6 +877,7 @@ Another advantage of the xgboost algorithm is the ability to view a variable imp
 
 ```{r m3_var_imp_iq}
 #| fig-height: 6
+#| message: false
 
 fit3.orig.iq <- extract_fit_engine(fit3.iq)
 
@@ -878,6 +890,7 @@ xgboost::xgb.importance(model = fit3.orig.iq$models$model_2) %>%
 
 ```{r m3_var_imp_sj}
 #| fig-height: 6
+#| message: false
 
 fit3.orig.sj <- extract_fit_engine(fit3.sj)
 
@@ -895,6 +908,9 @@ xgboost::xgb.importance(model = fit3.orig.sj$models$model_2) %>%
 Each of the models will forecast the validation set to compare their predictive power.
 
 ```{r fx_valid_iq}
+#| echo: true
+#| eval: false
+
 
 fx1.iq <- fn_standardize_fx(forecast(fit1.iq, valid), the_model = 1, the_city = "iq")
 fx2.iq <- fn_standardize_fx(forecast(fit2.iq, valid), the_model = 2, the_city = "iq")
@@ -915,6 +931,9 @@ fx3.iq <- fn_standardize_fx(fx3.iq_trans, the_model = 3, the_city = "iq", the_sm
 
 
 ```{r fx_valid_sj}
+#| echo: true
+#| eval: false
+
 
 fx1.sj <- fn_standardize_fx(forecast(fit1.sj, valid), the_model = 1, the_city = "sj")
 fx2.sj <- fn_standardize_fx(forecast(fit2.sj, valid), the_model = 2, the_city = "sj")
@@ -936,6 +955,10 @@ An ensemble forecast will also be calculated as the simple average of the three 
 
 
 ```{r fx_valid_avg}
+#| echo: true
+#| eval: false
+
+
 #iq 
 fx.iq <- bind_rows(
   fx1.iq,
@@ -943,7 +966,7 @@ fx.iq <- bind_rows(
   fx3.iq
 )
 
-fx.iq_avg <- fx.iq %>% 
+fx.iq_avg <- fx.iq %>% #filter(.model != "fit1" & .model != "ensemble") %>% bind_rows(fx1.iq) %>% 
   as_tibble() %>% 
   group_by(city, yearweek) %>% 
   summarize(across(contains("predicted"), \(x){mean(x, na.rm = T)})) %>% 
@@ -951,7 +974,10 @@ fx.iq_avg <- fx.iq %>%
   mutate(.model = "ensemble") %>% 
   tsibble(index = yearweek, key = c(city, .model))
 
-fx.iq <- bind_rows(fx.iq, fx.iq_avg)
+fx.iq <- bind_rows(
+  fx.iq, 
+  fx.iq_avg
+)
 
 # sj
 fx.sj <- bind_rows(
@@ -960,7 +986,7 @@ fx.sj <- bind_rows(
   fx3.sj
 )
 
-fx.sj_avg <- fx.sj %>% 
+fx.sj_avg <- fx.sj %>% #filter(.model != "fit1" & .model != "ensemble") %>% bind_rows(fx1.sj) %>% 
   as_tibble() %>% 
   group_by(city, yearweek) %>% 
   summarize(across(contains("predicted"), \(x){mean(x, na.rm = T)})) %>% 
@@ -968,7 +994,10 @@ fx.sj_avg <- fx.sj %>%
   mutate(.model = "ensemble") %>% 
   tsibble(index = yearweek, key = c(city, .model))
 
-fx.sj <- bind_rows(fx.sj, fx.sj_avg)
+fx.sj <- bind_rows(
+  fx.sj, 
+  fx.sj_avg
+)
 
 
 ```
@@ -983,10 +1012,22 @@ saveRDS(fx.sj, "Report Objects/fx_valid.sj.RDS")
 ```
 
 
+```{r fx_valid_read}
+#| echo: false
+#| eval: true
+
+fx.iq <- readRDS("Report Objects/fx_valid.iq.RDS")
+fx.sj <- readRDS("Report Objects/fx_valid.sj.RDS")
+
+```
+
+
 
 ##### Comparison
 
-Iquitos has a lower mean absolute error than San Juan, however, this is likely a result of having an average of 7.54 weekly cases to San Juan's average of 34.1 during the training set. Surprisingly, the Seasonal Mean Plus Trend approach (Model 1) outperforms the ARIMAX approach (Model 2) for Iquitos. The best model likely is the ensemble model as it's only slightly edged out for both cities.
+Iquitos has a lower mean absolute error than San Juan, however, this is likely a result of having an average of 7.54 weekly cases to San Juan's average of 34.1 during the training set. Moderately surprising, the Seasonal Average approach (Model 1) is very comparable to the other two models. This possibly suggests the models using exogenous factors are not optimal and not getting much insight from them. The Boosted Prophet model performs the best for Iquitos yet the worst for San Juan. 
+
+The best model likely is the ensemble model as it's only slightly edged out for Iquitos and performs best for San Juan. 
 
 ```{r fx_valid_plot_iq}
 
@@ -1026,7 +1067,7 @@ fx.iq %>%
 
 ```{r fx_valid_plot_sj}
 
-fx.sj %>% 
+fx.sj %>% #filter(!(.model == "fit1" & city == "sj")) %>% bind_rows(fx1.sj) %>% 
   autoplot(predicted_cases) +
   autolayer(
     train.all %>% filter(city == "sj") %>% filter(week_start_date >= ymd(valid.start.sj) - weeks(52)), 
@@ -1073,6 +1114,9 @@ mae.valid %>%
 All models are then refit over the entire pre-test set data, both training and validation sets, before making their final predictions.
 
 ```{r fit_final}
+#| echo: true
+#| eval: false
+
 
 fit1.iq_final <- fit1.iq %>% 
   refit(train.all %>% filter(city == "iq"))
@@ -1131,8 +1175,6 @@ fx.test.iq <- bind_rows(fx.test.iq, fx.test.iq_avg)
 
 ```
 
-
-
 ```{r fx_test_sj}
 #| eval: false
 
@@ -1165,7 +1207,6 @@ fx.test.sj_avg <- fx.test.sj %>%
 fx.test.sj <- bind_rows(fx.test.sj, fx.test.sj_avg)
 
 ```
-
 
 ```{r fx_test_save}
 #| eval: false
@@ -1224,6 +1265,8 @@ fx_test <- readRDS("Report Objects/fx_test.RDS") %>%
 
 ```
 
+The competition submissions can be found under the user account [shaun17](https://www.drivendata.org/users/shaun17/). The Boosted Prophet model was the best performing at 22.76 MAE, followed by the ensemble at 24.50 MAE, the ARIMAX at 25.81, and the Average Seasonality model at 30.91 MAE. 
+
 
 
 ```{r fx_test_plot}
@@ -1245,6 +1288,8 @@ bind_rows(
 
 ```
 
+> Note: Currently at the daily submission limit as of time of writing. Model 1 was updated and reduced the validation set MAE by .46 and 1.91 cases for Iquitos and San Juan, respectively. This in turn reduced the MAE for the ensemble model by .06 and .45 cases for Iquitos and San Juan, respectively.
+
 ## Conclusion
 
 <!-- Model Comparisons: Discuss the strengths and weaknesses of each model in the context of the study. -->
@@ -1257,7 +1302,7 @@ bind_rows(
 
 <!-- Future Work: Suggestions for further research or improvement in the forecasting models. -->
 
-The models struggled to truly capture the peaks on the validation set, though they appeared to capture the far-less-volatile shoulder months. The likely culprit is using linear models on exponential data without sufficiently transforming it. The boosted Prophet model was the only one able to semi-accurately predict a peak in validation and predicts varying peaks in the test set. More fine-tuning and tweaking of the linear models will improve the ensemble even more and that should likely be the forecast most relied on. Another model that should be considered is a generalized linear model of the negative binomial family which should be better fit to handle exponentially rising cases. 
+The models struggled to truly capture the peaks on the validation set, though they appeared to capture the far-less-volatile shoulder months. The likely culprit is using linear models on exponential data without sufficiently transforming it. The boosted Prophet model was the only one able to semi-accurately predict a peak in validation and the predicted peaks in the test set are not identical. More fine-tuning and tweaking of the linear models will improve the ensemble even more and that should likely be the forecast most relied on. Another model that should be considered is a generalized linear model of the negative binomial family which should be better fit to handle exponentially rising cases. 
 
 The biggest limitation on these models is that they are location-specific. Different variables and parameters were used for each city making it difficult to generalize these to other locations. While a generalized approach could mean the same data could be used to make predictions elsewhere, we are constrained to only the methodology: new models must be estimated on that locations' data to forecast. 
 
@@ -1270,7 +1315,12 @@ The biggest limitation on these models is that they are location-specific. Diffe
 
 
 
+\newpage
 
+## References
+
+::: {#refs}
+:::
 
 ```{r}
 #| echo: false
